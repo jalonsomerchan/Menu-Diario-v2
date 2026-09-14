@@ -2447,7 +2447,7 @@ onUnmounted(() => {
                 ><input v-model="alertDraft.default_enabled" type="checkbox" /> Activo por
                 defecto</label
               ><label class="option-active"
-                ><input v-model="alertDraft.active" type="checkbox" /> Disponible</label
+                ><input v-model="alertDraft.active" type="checkbox" /> Visible</label
               ><label class="field-label alert-order"
                 >Orden<input v-model.number="alertDraft.order" type="number" min="0" max="9999"
               /></label>
