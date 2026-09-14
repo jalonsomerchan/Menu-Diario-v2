@@ -30,7 +30,7 @@ No actionable P0, P1, or P2 differences remain.
 
 ## Implementation checklist
 
-- [x] Preserve existing authentication, persistence, settings, infinite loading, editing, and meal swapping.
+- [x] Preserve existing authentication, persistence, settings, infinite loading, editing, and individual dish moving.
 - [x] Keep the existing vertical day list as the primary information architecture.
 - [x] Surface day-level and meal-level notes in the list.
 - [x] Add blue mobile-first tokens, progress cue, sticky chrome, and floating add action.

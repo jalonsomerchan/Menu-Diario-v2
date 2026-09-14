@@ -6,7 +6,6 @@ import {
   PhArrowLeft,
   PhArrowRight,
   PhArrowsClockwise,
-  PhArrowsLeftRight,
   PhBarbell,
   PhBell,
   PhCalendarBlank,
@@ -172,8 +171,8 @@ const saving = ref(false)
 const draftDayKey = ref('')
 const draftWeekStart = ref('')
 const draftDay = ref(null)
-const swapSource = ref(null)
-const dragSource = ref(null)
+const dishDragSource = ref(null)
+const dropTarget = ref(null)
 const userToken = ref('')
 const dishSearch = ref('')
 const favoritesOnly = ref(false)
@@ -220,6 +219,7 @@ const telegramLinking = ref(false)
 const telegramTesting = ref(false)
 const telegramStatusLoading = ref(false)
 const remindingGroup = ref(false)
+const sendingAlertKey = ref('')
 const shareLoading = ref(false)
 const shareData = ref(null)
 const shareError = ref('')
@@ -228,6 +228,7 @@ const installBannerVisible = ref(false)
 const isStandalone = ref(false)
 let telegramPollTimer = null
 let rouletteTimer = null
+let noticeTimer = null
 let installPromptHandler = null
 let appInstalledHandler = null
 
@@ -479,18 +480,21 @@ function normalizedMealAlerts(sourceMeal, meal, withDefaults) {
           icon: alert.icon || 'bell',
           overridden: true,
         }))
-  const custom = alerts
-    .filter((alert) => alert?.type !== 'global')
-    .map((alert) => ({
+  const custom = alerts.reduce((result, alert, sourceIndex) => {
+    if (alert?.type === 'global') return result
+    result.push({
       type: 'custom',
       id: alert.id || customAlertId(),
+      source_index: sourceIndex,
       name: alert.name || '',
       time: alert.time || '09:00',
       day_offset: Number(alert.day_offset || 0),
       icon: alert.icon || 'bell',
       message: alert.message || '',
       enabled: Boolean(alert.enabled),
-    }))
+    })
+    return result
+  }, [])
   return [...defaults, ...custom]
 }
 function emptyDay() {
@@ -683,6 +687,10 @@ function showShoppingError(title, message, details = '', retry = false) {
 
 function closeShoppingError() {
   shoppingErrorModal.value = null
+}
+
+function closeErrorModal() {
+  error.value = ''
 }
 
 function retryShoppingGeneration() {
@@ -1285,6 +1293,7 @@ const isGroupOwner = computed(() =>
   Boolean(group.value && user.value && group.value.owner_uid === user.value.uid),
 )
 const activeSettingsTab = ref('configuration')
+const alertEditorOpen = ref(null)
 const settingsTabs = computed(() =>
   [
     { id: 'configuration', label: 'Configuración', icon: PhGear },
@@ -1294,6 +1303,10 @@ const settingsTabs = computed(() =>
     { id: 'telegram', label: 'Telegram', icon: PhTelegramLogo },
   ].filter((tab) => !tab.ownerOnly || isGroupOwner.value),
 )
+const alertAccordionItems = computed(() => [
+  ...(alertEditorOpen.value === 'new' ? [{ id: 'new', alert: null }] : []),
+  ...globalAlerts.value.map((alert) => ({ id: Number(alert.id), alert })),
+])
 async function copyInviteLink() {
   if (!group.value?.invite_code) return
   const link = `${window.location.origin}${window.location.pathname}?groupInvite=${encodeURIComponent(group.value.invite_code)}`
@@ -1428,6 +1441,14 @@ function resetAlertDraft() {
     order: 0,
   })
 }
+function openNewAlert() {
+  resetAlertDraft()
+  alertEditorOpen.value = 'new'
+}
+function closeAlertEditor() {
+  alertEditorOpen.value = null
+  resetAlertDraft()
+}
 function editAlert(alert) {
   Object.assign(alertDraft, {
     id: Number(alert.id),
@@ -1441,6 +1462,11 @@ function editAlert(alert) {
     active: Boolean(alert.active),
     order: Number(alert.order || 0),
   })
+  alertEditorOpen.value = Number(alert.id)
+}
+function toggleAlertEditor(alert) {
+  if (alertEditorOpen.value === Number(alert.id)) closeAlertEditor()
+  else editAlert(alert)
 }
 async function saveAlert() {
   if (!alertDraft.name.trim()) return
@@ -1452,7 +1478,7 @@ async function saveAlert() {
       name: alertDraft.name.trim(),
     })
     globalAlerts.value = data.global_alerts || globalAlerts.value
-    resetAlertDraft()
+    closeAlertEditor()
     notice.value = 'Aviso global guardado.'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo guardar el aviso global.'
@@ -1466,7 +1492,7 @@ async function deleteAlert(id) {
     await refreshToken()
     const data = await postJson('menudiario/delete_global_alert', userToken.value, { id })
     globalAlerts.value = data.global_alerts || globalAlerts.value
-    if (Number(alertDraft.id) === Number(id)) resetAlertDraft()
+    if (Number(alertDraft.id) === Number(id)) closeAlertEditor()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo borrar el aviso global.'
   } finally {
@@ -1496,6 +1522,36 @@ function addCustomAlert(meal) {
 }
 function removeCustomAlert(meal, index) {
   draftDay.value.meals[meal].alerts.splice(index, 1)
+}
+function alertActionKey(meal, alert) {
+  return [meal, alert.type, alert.alert_id ?? alert.source_index ?? alert.id].join(':')
+}
+async function sendAlertNow(meal, alert) {
+  const actionKey = alertActionKey(meal, alert)
+  if (sendingAlertKey.value || !draftDay.value) return
+  sendingAlertKey.value = actionKey
+  error.value = ''
+  try {
+    const saved = await saveDay(false)
+    if (!saved) return
+    await refreshToken()
+    const data = await postJson('telegram/send_alert_now', userToken.value, {
+      week_start: draftWeekStart.value,
+      day_date: draftDayKey.value,
+      meal,
+      alert_type: alert.type,
+      alert_id: alert.type === 'global' ? alert.alert_id : 0,
+      custom_index: alert.type === 'custom' ? alert.source_index : null,
+    })
+    notice.value = `Aviso enviado (${data.sent} ${data.sent === 1 ? 'persona' : 'personas'}).`
+    window.setTimeout(() => {
+      notice.value = ''
+    }, 4000)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo enviar el aviso.'
+  } finally {
+    sendingAlertKey.value = ''
+  }
 }
 function mealActiveAlerts(dayKey, meal, requestedWeek = '') {
   return currentDay(dayKey, requestedWeek, true).meals[meal].alerts.filter((alert) => alert.enabled)
@@ -1605,30 +1661,64 @@ async function remindGroup() {
     remindingGroup.value = false
   }
 }
-function startSwap(dayKey, meal, requestedWeek = '') {
-  swapSource.value =
-    swapSource.value?.day_date === dayKey &&
-    swapSource.value?.meal === meal &&
-    swapSource.value?.week_start === requestedWeek
-      ? null
-      : { week_start: requestedWeek, day_date: dayKey, meal }
+function startDishDrag(event, dayKey, meal, dish, requestedWeek = '') {
+  dishDragSource.value = { week_start: requestedWeek, day_date: dayKey, meal, dish }
+  dropTarget.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', dish)
+  }
 }
-function startDrag(dayKey, meal, requestedWeek = '') {
-  dragSource.value = { week_start: requestedWeek, day_date: dayKey, meal }
+function clearDishDrag() {
+  dishDragSource.value = null
+  dropTarget.value = null
 }
-async function dropMeal(dayKey, meal, requestedWeek = '') {
-  const source = dragSource.value || swapSource.value
-  dragSource.value = null
+function dragOverMeal(dayKey, meal, requestedWeek = '') {
+  if (!dishDragSource.value || dishDragSource.value.day_date === dayKey) {
+    dropTarget.value = null
+    return
+  }
+  dropTarget.value = { day_date: dayKey, meal, week_start: requestedWeek }
+}
+function dragOverDay(dayKey, requestedWeek = '') {
+  if (!dishDragSource.value || dishDragSource.value.day_date === dayKey) {
+    dropTarget.value = null
+    return
+  }
+  dropTarget.value = {
+    day_date: dayKey,
+    meal: dishDragSource.value.meal,
+    week_start: requestedWeek,
+  }
+}
+function isDropTargetDay(dayKey, requestedWeek = '') {
+  return (
+    dropTarget.value?.day_date === dayKey && dropTarget.value?.week_start === requestedWeek
+  )
+}
+function isDropTarget(dayKey, meal, requestedWeek = '') {
+  return (
+    dropTarget.value?.day_date === dayKey &&
+    dropTarget.value?.meal === meal &&
+    dropTarget.value?.week_start === requestedWeek
+  )
+}
+async function dropDish(dayKey, meal, requestedWeek = '') {
+  const source = dishDragSource.value
+  clearDishDrag()
   if (!source) return
-  if (source.day_date === dayKey && source.meal === meal && source.week_start === requestedWeek) {
-    swapSource.value = null
+  if (source.day_date === dayKey) {
+    notice.value = 'Mueve el plato a otro día.'
+    window.setTimeout(() => {
+      notice.value = ''
+    }, 2500)
     return
   }
   saving.value = true
   error.value = ''
   try {
     await refreshToken()
-    const data = await postJson('menudiario/swap_meals', userToken.value, {
+    const data = await postJson('menudiario/move_dish', userToken.value, {
       week_start: requestedWeek,
       source,
       target: { week_start: requestedWeek, day_date: dayKey, meal },
@@ -1648,24 +1738,15 @@ async function dropMeal(dayKey, meal, requestedWeek = '') {
     }
     rangeDays.value = nextRangeDays
     calendarDays.value = nextCalendarDays
-    swapSource.value = null
-    notice.value = 'Platos intercambiados.'
+    notice.value = 'Plato movido.'
     window.setTimeout(() => {
       notice.value = ''
     }, 2500)
   } catch (reason) {
-    error.value =
-      reason instanceof Error ? reason.message : 'No se pudieron intercambiar los platos.'
+    error.value = reason instanceof Error ? reason.message : 'No se pudo mover el plato.'
   } finally {
     saving.value = false
   }
-}
-function isSelected(dayKey, meal, requestedWeek = '') {
-  return (
-    swapSource.value?.day_date === dayKey &&
-    swapSource.value?.meal === meal &&
-    swapSource.value?.week_start === requestedWeek
-  )
 }
 function hasItems(dayKey, meal, requestedWeek = '') {
   return currentDay(dayKey, requestedWeek).meals[meal].items.length > 0
@@ -1713,6 +1794,16 @@ async function installApp() {
 function dismissInstallBanner() {
   installBannerVisible.value = false
 }
+
+watch(notice, (message) => {
+  if (noticeTimer) window.clearTimeout(noticeTimer)
+  noticeTimer = null
+  if (!message) return
+  noticeTimer = window.setTimeout(() => {
+    noticeTimer = null
+    if (notice.value === message) notice.value = ''
+  }, 4000)
+})
 
 watch([() => route.name, calendarMonth], () => {
   if (user.value && isCalendar.value) void loadCalendarMonth()
@@ -1770,6 +1861,7 @@ onUnmounted(() => {
   if (appInstalledHandler) window.removeEventListener('appinstalled', appInstalledHandler)
   stopTelegramPolling()
   if (rouletteTimer) window.clearTimeout(rouletteTimer)
+  if (noticeTimer) window.clearTimeout(noticeTimer)
 })
 </script>
 
@@ -1898,6 +1990,11 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <div v-if="notice" class="snackbar" role="status" aria-live="polite">
+      <PhCheckCircle :size="20" weight="fill" aria-hidden="true" />
+      <span>{{ notice }}</span>
+    </div>
+
     <aside v-if="installBannerVisible && !isStandalone" class="install-banner" aria-live="polite">
       <img :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
       <div>
@@ -1977,7 +2074,6 @@ onUnmounted(() => {
           Organiza desayuno, comida y cena en un vistazo. Tus platos quedan guardados y puedes
           moverlos entre días cuando cambien tus planes.
         </p>
-        <div v-if="error" class="alert error-alert">{{ error }}</div>
         <button class="google-button" @click="login">
           <span class="google-g"><PhGoogleLogo :size="18" weight="bold" aria-hidden="true" /></span>
           Continuar con Google
@@ -1985,8 +2081,6 @@ onUnmounted(() => {
       </section>
 
       <template v-else-if="user">
-        <div v-if="error && !isShopping" class="alert error-alert">{{ error }}</div>
-        <div v-if="notice" class="alert notice-alert">{{ notice }}</div>
         <section v-if="isDishes" class="catalog-page">
           <div class="page-heading catalog-heading">
             <div>
@@ -2413,10 +2507,6 @@ onUnmounted(() => {
           </div>
         </section>
         <template v-else-if="isDashboard">
-          <div v-if="swapSource" class="swap-hint">
-            Selecciona otro bloque para intercambiarlo
-            <button @click="swapSource = null">Cancelar</button>
-          </div>
           <section v-if="loading" class="loading-card">
             <div class="spinner"></div>
             Cargando tu menú…
@@ -2426,7 +2516,13 @@ onUnmounted(() => {
               v-for="day in dayEntries"
               :key="`${day.weekStart}-${day.isoDate}`"
               class="day-card"
-              :class="{ today: day.isoDate === toIsoDate(new Date()) }"
+              :class="{
+                today: day.isoDate === toIsoDate(new Date()),
+                'drop-target': isDropTargetDay(day.isoDate, day.weekStart),
+              }"
+              @dragenter.prevent="dragOverDay(day.isoDate, day.weekStart)"
+              @dragover.prevent="dragOverDay(day.isoDate, day.weekStart)"
+              @drop="dropDish(day.isoDate, dishDragSource?.meal || enabledMeals[0], day.weekStart)"
             >
               <header class="day-header">
                 <div class="day-heading-copy">
@@ -2482,29 +2578,19 @@ onUnmounted(() => {
                   :key="meal"
                   class="meal-card"
                   :class="{
-                    selected: isSelected(day.isoDate, meal, day.weekStart),
                     filled: hasItems(day.isoDate, meal, day.weekStart),
+                    'drop-target': isDropTarget(day.isoDate, meal, day.weekStart),
                   }"
-                  draggable="true"
-                  @dragstart="startDrag(day.isoDate, meal, day.weekStart)"
-                  @dragover.prevent
-                  @drop="dropMeal(day.isoDate, meal, day.weekStart)"
-                  @click="swapSource ? dropMeal(day.isoDate, meal, day.weekStart) : null"
+                  @dragenter.stop.prevent="dragOverMeal(day.isoDate, meal, day.weekStart)"
+                  @dragover.stop.prevent="dragOverMeal(day.isoDate, meal, day.weekStart)"
+                  @drop.stop="dropDish(day.isoDate, meal, day.weekStart)"
                 >
                   <span class="meal-icon" aria-hidden="true"
                     ><component :is="mealIcons[meal]" :size="21" weight="regular"
                   /></span>
                   <div class="meal-content">
                     <div class="meal-top">
-                      <span class="meal-name">{{ mealLabels[meal] }}</span
-                      ><button
-                        class="swap-button"
-                        title="Seleccionar para intercambiar"
-                        aria-label="Seleccionar para intercambiar"
-                        @click.stop="startSwap(day.isoDate, meal, day.weekStart)"
-                      >
-                        <PhArrowsLeftRight :size="19" weight="regular" />
-                      </button>
+                      <span class="meal-name">{{ mealLabels[meal] }}</span>
                     </div>
                     <div
                       v-if="currentDay(day.isoDate, day.weekStart).meals[meal].items.length"
@@ -2514,6 +2600,10 @@ onUnmounted(() => {
                         v-for="dish in currentDay(day.isoDate, day.weekStart).meals[meal].items"
                         :key="dish"
                         class="dish-chip"
+                        draggable="true"
+                        :title="`Arrastra ${dish} a otro día`"
+                        @dragstart.stop="startDishDrag($event, day.isoDate, meal, dish, day.weekStart)"
+                        @dragend="clearDishDrag"
                         >{{ dish }}</span
                       >
                     </div>
@@ -2668,6 +2758,14 @@ onUnmounted(() => {
                         />
                         {{ alert.time }} · {{ alertDayOffsetLabel(alert.day_offset) }}</span
                       ><button
+                        type="button"
+                        class="send-alert-button"
+                        :disabled="Boolean(sendingAlertKey) || saving"
+                        @click="sendAlertNow(meal, alert)"
+                      >
+                        <PhLightning :size="14" weight="regular" />
+                        {{ sendingAlertKey === alertActionKey(meal, alert) ? 'Enviando…' : 'Enviar ahora' }}</button
+                      ><button
                         v-if="alert.type === 'global' && alert.overridden"
                         type="button"
                         class="text-button"
@@ -2735,7 +2833,9 @@ onUnmounted(() => {
                           v-model="alert.message"
                           type="text"
                           maxlength="240"
-                          placeholder="Texto del aviso" /></label
+                          placeholder="Texto del aviso" /><span class="field-hint"
+                          >Variables: %fecha · %platos · %comida · %aviso</span
+                        ></label
                     ></template>
                   </div>
                 </div>
@@ -2932,94 +3032,122 @@ onUnmounted(() => {
               <p class="eyebrow">AVISOS</p>
               <h3>Avisos globales</h3>
             </div>
-            <button class="text-button" @click="resetAlertDraft">Nuevo</button>
+            <button class="text-button" @click="openNewAlert">Nuevo</button>
           </div>
           <p class="muted">
             Crea avisos reutilizables y decide en qué comidas aparecen por defecto.
           </p>
-          <div class="alert-form">
-            <div class="alert-form-primary">
-              <label class="field-label"
-                >Nombre del aviso<input
-                  v-model="alertDraft.name"
-                  placeholder="Ej.: Preparar la comida"
-                  maxlength="120"
-              /></label>
-              <label class="field-label"
-                >Mensaje <span class="field-hint">Opcional</span
-                ><input
-                  v-model="alertDraft.message"
-                  placeholder="Un detalle que quieras recordar"
-                  maxlength="240"
-              /></label>
-            </div>
-            <div class="alert-form-row">
-              <label class="field-label">Hora<input v-model="alertDraft.time" type="time" /></label
-              ><label class="field-label"
-                >Día del aviso<select v-model.number="alertDraft.day_offset">
-                  <option v-for="days in 31" :key="days - 1" :value="days - 1">
-                    {{ alertDayOffsetLabel(days - 1) }}
-                  </option>
-                </select></label
-              ><label class="field-label"
-                >Aplicar a<select v-model="alertDraft.scope">
-                  <option value="all">Desayuno, comida y cena</option>
-                  <option value="breakfast">Solo desayuno</option>
-                  <option value="lunch">Solo comida</option>
-                  <option value="dinner">Solo cena</option>
-                </select></label
+          <div class="alert-admin-list">
+            <template v-for="entry in alertAccordionItems" :key="entry.id">
+              <div
+                class="alert-admin-row"
+                :class="{ 'alert-admin-row-open': alertEditorOpen === entry.id }"
               >
-            </div>
-            <div class="field-label icon-picker-field">
-              Icono <span class="field-hint">Elige uno para reconocerlo de un vistazo</span>
-              <div class="icon-picker" role="group" aria-label="Icono del aviso">
+                <span class="alert-admin-icon" aria-hidden="true">
+                  <PhPlus v-if="entry.id === 'new'" :size="20" weight="regular" />
+                  <component
+                    v-else
+                    :is="alertIcon(entry.alert)"
+                    :size="20"
+                    weight="regular"
+                  />
+                </span>
+                <div class="alert-admin-title">
+                  <strong>{{ entry.id === 'new' ? 'Nuevo aviso' : entry.alert.name }}</strong
+                  ><small v-if="entry.alert"
+                    >{{ entry.alert.time }} · {{ alertDayOffsetLabel(entry.alert.day_offset) }} ·
+                    {{ entry.alert.scope === 'all' ? 'Todas las comidas' : mealLabels[entry.alert.scope]
+                    }}<span v-if="entry.alert.default_enabled"> · Activo por defecto</span></small
+                  ><small v-else>Configura un aviso reutilizable</small>
+                </div>
                 <button
-                  v-for="icon in alertIconOptions"
-                  :key="icon.id"
-                  type="button"
-                  class="icon-choice"
-                  :class="{ selected: alertDraft.icon === icon.id }"
-                  :aria-label="icon.label"
-                  :aria-pressed="alertDraft.icon === icon.id"
-                  :title="icon.label"
-                  @click="alertDraft.icon = icon.id"
+                  class="text-button"
+                  :aria-expanded="alertEditorOpen === entry.id"
+                  @click="entry.id === 'new' ? closeAlertEditor() : toggleAlertEditor(entry.alert)"
                 >
-                  <component :is="icon.icon" :size="20" weight="regular" aria-hidden="true" />
+                  {{ alertEditorOpen === entry.id ? 'Cerrar' : entry.id === 'new' ? 'Nuevo' : 'Editar' }}
+                </button>
+                <button
+                  v-if="entry.alert"
+                  class="remove-button"
+                  title="Borrar aviso"
+                  @click="deleteAlert(entry.alert.id)"
+                >
+                  <PhX :size="16" weight="regular" />
                 </button>
               </div>
-            </div>
-            <div class="alert-form-row alert-form-settings">
-              <label class="option-active"
-                ><input v-model="alertDraft.default_enabled" type="checkbox" /> Activo por
-                defecto</label
-              ><label class="option-active"
-                ><input v-model="alertDraft.active" type="checkbox" /> Visible</label
-              ><label class="field-label alert-order"
-                >Orden<input v-model.number="alertDraft.order" type="number" min="0" max="9999"
-              /></label>
-            </div>
-            <button class="primary-button" :disabled="saving" @click="saveAlert">
-              {{ alertDraft.id ? 'Actualizar aviso' : 'Crear aviso' }}
-            </button>
-          </div>
-          <div class="alert-admin-list">
-            <div v-for="alert in globalAlerts" :key="alert.id" class="alert-admin-row">
-              <span class="alert-admin-icon" aria-hidden="true">
-                <component :is="alertIcon(alert)" :size="20" weight="regular" />
-              </span>
-              <div class="alert-admin-title">
-                <strong>{{ alert.name }}</strong
-                ><small
-                  >{{ alert.time }} · {{ alertDayOffsetLabel(alert.day_offset) }} ·
-                  {{ alert.scope === 'all' ? 'Todas las comidas' : mealLabels[alert.scope]
-                  }}<span v-if="alert.default_enabled"> · Activo por defecto</span></small
-                >
+              <div v-if="alertEditorOpen === entry.id" class="alert-accordion-panel">
+                <div class="alert-form">
+                  <div class="alert-form-primary">
+                    <label class="field-label"
+                      >Nombre del aviso<input
+                        v-model="alertDraft.name"
+                        placeholder="Ej.: Preparar la comida"
+                        maxlength="120"
+                    /></label>
+                    <label class="field-label"
+                      >Mensaje <span class="field-hint">Opcional</span
+                      ><input
+                        v-model="alertDraft.message"
+                        placeholder="Un detalle que quieras recordar"
+                        maxlength="240"
+                    /></label>
+                    <p class="alert-variable-hint">
+                      Variables disponibles: <code>%fecha</code>, <code>%platos</code>,
+                      <code>%comida</code> y <code>%aviso</code>.
+                    </p>
+                  </div>
+                  <div class="alert-form-row">
+                    <label class="field-label">Hora<input v-model="alertDraft.time" type="time" /></label
+                    ><label class="field-label"
+                      >Día del aviso<select v-model.number="alertDraft.day_offset">
+                        <option v-for="days in 31" :key="days - 1" :value="days - 1">
+                          {{ alertDayOffsetLabel(days - 1) }}
+                        </option>
+                      </select></label
+                    ><label class="field-label"
+                      >Aplicar a<select v-model="alertDraft.scope">
+                        <option value="all">Desayuno, comida y cena</option>
+                        <option value="breakfast">Solo desayuno</option>
+                        <option value="lunch">Solo comida</option>
+                        <option value="dinner">Solo cena</option>
+                      </select></label
+                    >
+                  </div>
+                  <div class="field-label icon-picker-field">
+                    Icono <span class="field-hint">Elige uno para reconocerlo de un vistazo</span>
+                    <div class="icon-picker" role="group" aria-label="Icono del aviso">
+                      <button
+                        v-for="icon in alertIconOptions"
+                        :key="icon.id"
+                        type="button"
+                        class="icon-choice"
+                        :class="{ selected: alertDraft.icon === icon.id }"
+                        :aria-label="icon.label"
+                        :aria-pressed="alertDraft.icon === icon.id"
+                        :title="icon.label"
+                        @click="alertDraft.icon = icon.id"
+                      >
+                        <component :is="icon.icon" :size="20" weight="regular" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                  <div class="alert-form-row alert-form-settings">
+                    <label class="option-active"
+                      ><input v-model="alertDraft.default_enabled" type="checkbox" /> Activo por
+                      defecto</label
+                    ><label class="option-active"
+                      ><input v-model="alertDraft.active" type="checkbox" /> Visible</label
+                    ><label class="field-label alert-order"
+                      >Orden<input v-model.number="alertDraft.order" type="number" min="0" max="9999"
+                    /></label>
+                  </div>
+                  <button class="primary-button" :disabled="saving" @click="saveAlert">
+                    {{ alertDraft.id ? 'Actualizar aviso' : 'Crear aviso' }}
+                  </button>
+                </div>
               </div>
-              <button class="text-button" @click="editAlert(alert)">Editar</button
-              ><button class="remove-button" title="Borrar aviso" @click="deleteAlert(alert.id)">
-                <PhX :size="16" weight="regular" />
-              </button>
-            </div>
+            </template>
           </div>
         </section>
         <section v-if="activeSettingsTab === 'group' && group" class="group-settings">
@@ -3267,6 +3395,37 @@ onUnmounted(() => {
         </template>
       </div>
     </section>
+
+    <dialog
+      v-if="error && !isShopping"
+      open
+      class="modal-backdrop error-backdrop"
+      @click.self="closeErrorModal"
+    >
+      <div class="modal-card error-modal">
+        <div class="modal-header">
+          <div class="error-modal-heading">
+            <div class="error-modal-icon"><PhWarningCircle :size="24" /></div>
+            <div>
+              <p class="eyebrow">ERROR</p>
+              <h2>No se ha podido completar la acción</h2>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="Cerrar error"
+            @click="closeErrorModal"
+          >
+            <PhX :size="22" />
+          </button>
+        </div>
+        <p class="error-modal-message">{{ error }}</p>
+        <div class="modal-footer">
+          <button type="button" class="secondary-button" @click="closeErrorModal">Cerrar</button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog
       v-if="calendarDetailOpen"

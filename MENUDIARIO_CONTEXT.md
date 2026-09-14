@@ -20,14 +20,14 @@ La nueva aplicación debe:
   ya instaladas.
 
 El primer objetivo funcional solicitado es asignar platos a desayuno, comida y
-cena, configurar qué comidas se quieren usar siempre e intercambiar platos
-entre distintos días.
+cena, configurar qué comidas se quieren usar siempre y mover platos entre
+distintos días.
 
 ## 2. Estado actual
 
 Está implementado el primer vertical funcional: autenticación, planificador
-semanal, edición de días, preferencias de comidas, persistencia MySQL e
-intercambio de bloques de comida.
+semanal, edición de días, preferencias de comidas, persistencia MySQL y
+movimiento individual de platos.
 
 Todavía no se ha hecho la migración completa del histórico y de todas las
 funcionalidades de Firestore de la aplicación original.
@@ -51,9 +51,9 @@ Incluye:
 - Notas por comida y notas generales del día.
 - Sugerencias de platos mediante `<datalist>`.
 - Ajustes para activar/desactivar desayuno, comida y cena.
-- Intercambio mediante:
-  - arrastrar un bloque de comida sobre otro bloque;
-  - seleccionar el botón `⇄` y después pulsar otro bloque.
+- Movimiento mediante arrastrar cada plato y soltarlo en otro día. Al soltarlo
+  sobre una comida concreta puede cambiar de franja; al soltarlo sobre la
+  tarjeta del día conserva su franja original.
 - Mensajes de guardado, errores y estado de carga.
 - Diseño responsive para escritorio y móvil.
 - Los días de la página principal se muestran en un listado vertical.
@@ -67,7 +67,7 @@ Incluye:
   permite volver al planificador con `/`.
 - Vue Router define rutas reales para las páginas actuales: `/` (planificador)
   y `/ajustes` (configuración).
-- El intercambio contempla también días de semanas ya cargadas.
+- El movimiento contempla también días de semanas ya cargadas.
 - Gestión del grupo actual desde Ajustes: código y enlace de invitación,
   miembros, emails pendientes, unión por código y salida del grupo.
 - Las invitaciones por email quedan pendientes y se aceptan automáticamente
@@ -390,17 +390,19 @@ Body simplificado:
 }
 ```
 
-### `POST /menudiario/swap_meals`
+### `POST /menudiario/move_dish`
 
-Intercambia el contenido completo de dos bloques de comida, incluyendo platos,
-notas, estado omitido y configuración del aviso.
+Mueve un único plato entre dos días. Solo cambia las listas de platos; las
+notas, el estado omitido y la configuración de avisos de cada comida se
+mantienen en su día original.
 
 ```json
 {
   "week_start": "2026-09-14",
   "source": {
     "day_date": "2026-09-14",
-    "meal": "lunch"
+    "meal": "lunch",
+    "dish": "Ensalada de pasta"
   },
   "target": {
     "day_date": "2026-09-17",
@@ -411,8 +413,8 @@ notas, estado omitido y configuración del aviso.
 
 La operación usa una transacción MySQL.
 
-`source.week_start` y `target.week_start` permiten intercambiar bloques entre
-semanas distintas.
+`source.week_start` y `target.week_start` permiten mover platos entre semanas
+distintas. El endpoint rechaza movimientos dentro del mismo día.
 
 ## 5. Decisiones técnicas actuales
 
@@ -428,7 +430,7 @@ semanas distintas.
   los miembros trabajan sobre el mismo menú semanal.
 - Las comidas visibles son una opción del grupo y solo las cambia su
   propietario.
-- El intercambio mueve bloques completos, no solo el texto de un plato.
+- El movimiento cambia solo el plato seleccionado, no el bloque completo.
 
 ## 6. Comprobaciones realizadas
 
