@@ -10,8 +10,10 @@ import {
   PhBell,
   PhCalendarBlank,
   PhCalendarCheck,
+  PhCamera,
   PhCaretLeft,
   PhCaretRight,
+  PhCaretDown,
   PhCheck,
   PhCheckCircle,
   PhChefHat,
@@ -44,11 +46,12 @@ import {
   PhSun,
   PhTag,
   PhTelegramLogo,
+  PhTrash,
   PhUsers,
   PhWarningCircle,
   PhX,
 } from '@phosphor-icons/vue'
-import { ApiError, getJson, postJson } from './lib/api'
+import { ApiError, getJson, postJson, uploadFile } from './lib/api'
 import { formatDay, fromIsoDate, mondayOf, shiftDate, toIsoDate } from './lib/dates'
 import {
   getFirebaseAuth,
@@ -131,6 +134,19 @@ const preferences = reactive({
   notification_types: notificationTypes.map((type) => type.id),
 })
 const dishes = ref([])
+const tuppers = ref([])
+const tupperSearch = ref('')
+const tupperFilter = ref('all')
+const tupperEditorOpen = ref(false)
+const tupperDraft = reactive({
+  id: '',
+  name: '',
+  portions: 1,
+  stored_at: toIsoDate(new Date()),
+  expires_at: '',
+  location: '',
+  notes: '',
+})
 const group = ref(null)
 const dailyOptions = ref([])
 const globalAlerts = ref([])
@@ -168,6 +184,8 @@ const nextRangeStart = ref('')
 const loadingMore = ref(false)
 const editorOpen = ref(false)
 const saving = ref(false)
+const photoUploadingDish = ref('')
+const photoDeletingDish = ref('')
 const draftDayKey = ref('')
 const draftWeekStart = ref('')
 const draftDay = ref(null)
@@ -244,6 +262,7 @@ const baseUrl = import.meta.env.BASE_URL
 const publicAsset = (path) => `${baseUrl}${path.replace(/^\/+/, '')}`
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
+const isTuppers = computed(() => route.name === 'tuppers')
 const isShopping = computed(() => route.name === 'shopping')
 const isCalendar = computed(() => route.name === 'calendar')
 const isShared = computed(() => route.name === 'shared-day')
@@ -265,6 +284,41 @@ const sortedDishes = computed(() => {
         Number(b.times_used || 0) - Number(a.times_used || 0) ||
         a.name.localeCompare(b.name, 'es'),
     )
+})
+const tupperStats = computed(() => ({
+  containers: tuppers.value.length,
+  portions: tuppers.value.reduce((total, tupper) => total + Number(tupper.portions || 0), 0),
+  soon: tuppers.value.filter((tupper) => tupperStatus(tupper) === 'soon').length,
+  expired: tuppers.value.filter((tupper) => tupperStatus(tupper) === 'expired').length,
+}))
+const filteredTuppers = computed(() => {
+  const query = tupperSearch.value.trim().toLocaleLowerCase('es')
+  const matchesFilter = (tupper) => {
+    const status = tupperStatus(tupper)
+    if (tupperFilter.value === 'available')
+      return Number(tupper.portions) > 0 && status !== 'expired'
+    if (tupperFilter.value === 'soon') return status === 'soon'
+    if (tupperFilter.value === 'expired') return status === 'expired'
+    if (tupperFilter.value === 'empty') return Number(tupper.portions) <= 0
+    return true
+  }
+  return [...tuppers.value]
+    .filter(
+      (tupper) =>
+        matchesFilter(tupper) &&
+        (!query ||
+          `${tupper.name} ${tupper.location || ''} ${tupper.notes || ''}`
+            .toLocaleLowerCase('es')
+            .includes(query)),
+    )
+    .sort((a, b) => {
+      const statusOrder = { expired: 0, soon: 1, fresh: 2, unknown: 3, empty: 4 }
+      return (
+        (statusOrder[tupperStatus(a)] ?? 5) - (statusOrder[tupperStatus(b)] ?? 5) ||
+        String(a.expires_at || '9999-12-31').localeCompare(String(b.expires_at || '9999-12-31')) ||
+        a.name.localeCompare(b.name, 'es')
+      )
+    })
 })
 const calendarCells = computed(() => {
   const first = mondayOf(calendarMonth.value)
@@ -918,6 +972,180 @@ async function saveDish() {
     saving.value = false
   }
 }
+function updateDishInCatalog(updatedDish) {
+  if (!updatedDish?.id) return
+  const index = dishes.value.findIndex((dish) => Number(dish.id) === Number(updatedDish.id))
+  if (index >= 0) dishes.value.splice(index, 1, { ...dishes.value[index], ...updatedDish })
+}
+async function uploadDishPhoto(event, dish) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || dish.source === 'admin' || photoUploadingDish.value) return
+  if (!file.type.startsWith('image/')) {
+    error.value = 'Elige una imagen para subir la foto del plato.'
+    return
+  }
+  photoUploadingDish.value = String(dish.id)
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await uploadFile('menudiario/upload_dish_photo', userToken.value, file, {
+      dish_id: dish.id,
+    })
+    updateDishInCatalog(data.dish)
+    notice.value = 'Foto del plato guardada.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo subir la foto del plato.'
+  } finally {
+    photoUploadingDish.value = ''
+  }
+}
+async function removeDishPhoto(dish) {
+  if (!dish.photo_url || dish.source === 'admin' || photoDeletingDish.value) return
+  if (!window.confirm(`¿Quieres eliminar la foto de «${dish.name}»?`)) return
+  photoDeletingDish.value = String(dish.id)
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/delete_dish_photo', userToken.value, {
+      dish_id: dish.id,
+    })
+    updateDishInCatalog(data.dish)
+    notice.value = 'Foto del plato eliminada.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo eliminar la foto del plato.'
+  } finally {
+    photoDeletingDish.value = ''
+  }
+}
+function tupperStorageKey() {
+  return `menu-diario-tuppers-${user.value?.uid || 'local'}`
+}
+function loadTuppers() {
+  try {
+    const stored = window.localStorage.getItem(tupperStorageKey())
+    const parsed = stored ? JSON.parse(stored) : []
+    tuppers.value = Array.isArray(parsed) ? parsed : []
+  } catch {
+    tuppers.value = []
+  }
+}
+function persistTuppers() {
+  try {
+    window.localStorage.setItem(tupperStorageKey(), JSON.stringify(tuppers.value))
+  } catch {
+    error.value = 'No se pudieron guardar los tuppers en este dispositivo.'
+  }
+}
+function tupperStatus(tupper) {
+  if (Number(tupper.portions || 0) <= 0) return 'empty'
+  if (!tupper.expires_at) return 'unknown'
+  const today = toIsoDate(new Date())
+  if (tupper.expires_at < today) return 'expired'
+  if (tupper.expires_at <= shiftDate(today, 2)) return 'soon'
+  return 'fresh'
+}
+function tupperStatusLabel(tupper) {
+  const labels = {
+    expired: 'Caducado',
+    soon: 'Caduca pronto',
+    fresh: 'En buen estado',
+    unknown: 'Sin fecha',
+    empty: 'Agotado',
+  }
+  return labels[tupperStatus(tupper)]
+}
+function tupperStatusMessage(tupper) {
+  const status = tupperStatus(tupper)
+  if (status === 'expired') return 'Revisa este tupper antes de consumirlo.'
+  if (status === 'soon') return `Consúmelo antes del ${formatTupperDate(tupper.expires_at)}.`
+  if (status === 'empty') return 'Ya no quedan raciones.'
+  if (status === 'unknown') return 'Añade una fecha de caducidad para controlarlo.'
+  return 'Todavía tienes margen para consumirlo.'
+}
+function formatTupperDate(value) {
+  if (!value) return 'Sin fecha'
+  return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short' }).format(
+    new Date(`${value}T00:00:00`),
+  )
+}
+function resetTupperDraft() {
+  Object.assign(tupperDraft, {
+    id: '',
+    name: '',
+    portions: 1,
+    stored_at: toIsoDate(new Date()),
+    expires_at: '',
+    location: '',
+    notes: '',
+  })
+}
+function openNewTupper() {
+  resetTupperDraft()
+  tupperEditorOpen.value = true
+}
+function editTupper(tupper) {
+  Object.assign(tupperDraft, {
+    id: tupper.id,
+    name: tupper.name,
+    portions: Number(tupper.portions || 0),
+    stored_at: tupper.stored_at || toIsoDate(new Date()),
+    expires_at: tupper.expires_at || '',
+    location: tupper.location || '',
+    notes: tupper.notes || '',
+  })
+  tupperEditorOpen.value = true
+}
+function closeTupperEditor() {
+  tupperEditorOpen.value = false
+  resetTupperDraft()
+}
+function saveTupper() {
+  const name = tupperDraft.name.trim()
+  const portions = Math.floor(Number(tupperDraft.portions))
+  if (!name) {
+    error.value = 'Escribe un nombre para el tupper.'
+    return
+  }
+  if (!Number.isFinite(portions) || portions < 1) {
+    error.value = 'Indica al menos una ración.'
+    return
+  }
+  if (!tupperDraft.stored_at || !tupperDraft.expires_at) {
+    error.value = 'Indica cuándo lo guardaste y cuándo caduca.'
+    return
+  }
+  if (tupperDraft.expires_at < tupperDraft.stored_at) {
+    error.value = 'La fecha de caducidad no puede ser anterior a la fecha de entrada.'
+    return
+  }
+  const nextTupper = {
+    id: tupperDraft.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    portions,
+    stored_at: tupperDraft.stored_at,
+    expires_at: tupperDraft.expires_at,
+    location: tupperDraft.location.trim(),
+    notes: tupperDraft.notes.trim(),
+  }
+  const existingIndex = tuppers.value.findIndex((tupper) => tupper.id === nextTupper.id)
+  if (existingIndex >= 0) tuppers.value.splice(existingIndex, 1, nextTupper)
+  else tuppers.value.push(nextTupper)
+  persistTuppers()
+  closeTupperEditor()
+  notice.value = existingIndex >= 0 ? 'Tupper actualizado.' : 'Tupper añadido a la nevera.'
+}
+function changeTupperPortions(tupper, amount) {
+  const nextPortions = Math.max(0, Number(tupper.portions || 0) + amount)
+  tupper.portions = nextPortions
+  persistTuppers()
+}
+function deleteTupper(tupper) {
+  if (!window.confirm(`¿Quieres borrar «${tupper.name}»?`)) return
+  tuppers.value = tuppers.value.filter((item) => item.id !== tupper.id)
+  persistTuppers()
+  notice.value = 'Tupper borrado.'
+}
 async function toggleDishFavorite(dish) {
   const previous = Boolean(dish.is_favorite)
   dish.is_favorite = !previous
@@ -964,6 +1192,12 @@ async function logout() {
   shoppingErrorDetails.value = ''
   shoppingErrorModal.value = null
   shoppingStep.value = 1
+  photoUploadingDish.value = ''
+  photoDeletingDish.value = ''
+  tuppers.value = []
+  tupperSearch.value = ''
+  tupperFilter.value = 'all'
+  tupperEditorOpen.value = false
   telegram.value = {
     configured: false,
     connected: false,
@@ -1141,6 +1375,24 @@ function addDish(meal) {
 function removeDish(meal, index) {
   draftDay.value.meals[meal].items.splice(index, 1)
   if (!draftDay.value.meals[meal].items.length) draftDay.value.meals[meal].items.push('')
+}
+function mealDraftSummary(meal) {
+  const items = draftDay.value?.meals?.[meal]?.items || []
+  const count = items.filter((item) => String(item).trim()).length
+  if (!count) return 'Añade un plato para empezar'
+  return `${count} ${count === 1 ? 'plato añadido' : 'platos añadidos'}`
+}
+function mealMoreOptionsSummary(meal) {
+  const currentMeal = draftDay.value?.meals?.[meal]
+  if (!currentMeal) return 'Avisos y nota'
+  const parts = []
+  if (currentMeal.alerts.length) {
+    parts.push(
+      `${currentMeal.alerts.length} ${currentMeal.alerts.length === 1 ? 'aviso' : 'avisos'}`,
+    )
+  }
+  if (String(currentMeal.note || '').trim()) parts.push('nota')
+  return parts.length ? parts.join(' · ') : 'Añadir aviso o nota'
 }
 function optionIsSelected(id) {
   return Boolean(draftDay.value?.option_ids?.includes(Number(id)))
@@ -1745,6 +1997,10 @@ function goToDishes() {
   menuOpen.value = false
   router.push({ name: 'dishes' })
 }
+function goToTuppers() {
+  menuOpen.value = false
+  router.push({ name: 'tuppers' })
+}
 function goToShopping() {
   menuOpen.value = false
   router.push({ name: 'shopping' })
@@ -1825,6 +2081,7 @@ onMounted(async () => {
       user.value = nextUser
       authReady.value = true
       if (nextUser) {
+        loadTuppers()
         if (inviteFromUrl) goToSettings()
         await loadDashboardRange()
         if (isCalendar.value) await loadCalendarMonth()
@@ -1893,6 +2150,8 @@ onUnmounted(() => {
             <PhHouse :size="19" weight="regular" /><span>Planificador</span></button
           ><button type="button" :class="{ active: isDishes }" @click="goToDishes">
             <PhForkKnife :size="19" weight="regular" /><span>Mis platos</span></button
+          ><button type="button" :class="{ active: isTuppers }" @click="goToTuppers">
+            <PhCookingPot :size="19" weight="regular" /><span>Mis tuppers</span></button
           ><button type="button" :class="{ active: isShopping }" @click="goToShopping">
             <PhShoppingCart :size="19" weight="regular" /><span>Lista de la compra</span></button
           ><button type="button" :class="{ active: isCalendar }" @click="goToCalendar">
@@ -2068,7 +2327,9 @@ onUnmounted(() => {
             <div>
               <p class="eyebrow">TU CATÁLOGO</p>
               <h1>Mis platos</h1>
-              <p class="muted">Guarda tus platos habituales y tenlos a mano cuando planifiques.</p>
+              <p class="muted">
+                Guarda tus platos habituales, añade una foto y tenlos a mano cuando planifiques.
+              </p>
             </div>
             <button class="primary-button" @click="$refs.dishForm?.querySelector('input')?.focus()">
               <PhPlus :size="18" weight="regular" /> Añadir plato
@@ -2114,7 +2375,19 @@ onUnmounted(() => {
           </div>
           <section v-else class="dish-catalog-grid" aria-label="Listado de platos">
             <article v-for="dish in sortedDishes" :key="dish.id" class="dish-library-card">
-              <div class="dish-library-icon"><PhForkKnife :size="22" weight="regular" /></div>
+              <a
+                v-if="dish.photo_url"
+                class="dish-library-photo"
+                :href="dish.photo_url"
+                target="_blank"
+                rel="noreferrer"
+                :title="`Ver foto de ${dish.name}`"
+              >
+                <img :src="dish.photo_url" :alt="`Foto de ${dish.name}`" />
+              </a>
+              <div v-else class="dish-library-icon">
+                <PhForkKnife :size="22" weight="regular" />
+              </div>
               <div class="dish-library-copy">
                 <strong>{{ dish.name }}</strong
                 ><small
@@ -2124,6 +2397,34 @@ onUnmounted(() => {
                       : 'Todavía no usado'
                   }}<span v-if="dish.source === 'admin'"> · Sugerencia inicial</span></small
                 >
+              </div>
+              <div v-if="dish.source !== 'admin'" class="dish-photo-actions">
+                <label class="photo-action-button dish-photo-action">
+                  <PhCamera :size="16" weight="regular" />
+                  <span>{{ dish.photo_url ? 'Reemplazar' : 'Hacer foto' }}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    :disabled="Boolean(photoUploadingDish)"
+                    @change="uploadDishPhoto($event, dish)"
+                  />
+                </label>
+                <button
+                  v-if="dish.photo_url"
+                  type="button"
+                  class="photo-action-button danger dish-photo-action"
+                  :disabled="Boolean(photoDeletingDish) || Boolean(photoUploadingDish)"
+                  @click="removeDishPhoto(dish)"
+                >
+                  <PhTrash :size="16" weight="regular" /> Eliminar
+                </button>
+                <small v-if="photoUploadingDish === String(dish.id)" class="photo-upload-status">
+                  Subiendo…
+                </small>
+                <small v-else-if="photoDeletingDish === String(dish.id)" class="photo-upload-status">
+                  Eliminando…
+                </small>
               </div>
               <button
                 type="button"
@@ -2139,6 +2440,161 @@ onUnmounted(() => {
               >
                 <PhHeart :size="22" :weight="dish.is_favorite ? 'fill' : 'regular'" />
               </button>
+            </article>
+          </section>
+        </section>
+        <section v-else-if="isTuppers" class="tuppers-page">
+          <div class="page-heading tuppers-heading">
+            <div>
+              <p class="eyebrow">ORGANIZA TU NEVERA</p>
+              <h1>Mis tuppers</h1>
+              <p class="muted">
+                Lleva el control de tus raciones y descubre de un vistazo qué tienes que consumir
+                primero.
+              </p>
+            </div>
+            <button type="button" class="primary-button" @click="openNewTupper">
+              <PhPlus :size="18" weight="regular" /> Añadir tupper
+            </button>
+          </div>
+          <section class="tupper-summary" aria-label="Resumen de tuppers">
+            <article class="tupper-summary-card">
+              <div class="tupper-summary-icon"><PhCookingPot :size="21" /></div>
+              <div>
+                <strong>{{ tupperStats.containers }}</strong
+                ><span>tuppers guardados</span>
+              </div>
+            </article>
+            <article class="tupper-summary-card">
+              <div class="tupper-summary-icon portions"><PhForkKnife :size="21" /></div>
+              <div>
+                <strong>{{ tupperStats.portions }}</strong
+                ><span>raciones disponibles</span>
+              </div>
+            </article>
+            <article class="tupper-summary-card warning">
+              <div class="tupper-summary-icon soon"><PhWarningCircle :size="21" /></div>
+              <div>
+                <strong>{{ tupperStats.soon }}</strong
+                ><span>para consumir pronto</span>
+              </div>
+            </article>
+          </section>
+          <div class="tuppers-toolbar">
+            <label class="search-field"
+              ><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input
+                v-model="tupperSearch"
+                type="search"
+                placeholder="Buscar tupper, ubicación o nota"
+                aria-label="Buscar en mis tuppers"
+            /></label>
+            <div class="tupper-filters" aria-label="Filtrar tuppers">
+              <button
+                v-for="filter in [
+                  { id: 'all', label: 'Todos' },
+                  { id: 'available', label: 'Disponibles' },
+                  { id: 'soon', label: 'Pronto' },
+                  { id: 'expired', label: 'Caducados' },
+                ]"
+                :key="filter.id"
+                type="button"
+                :class="{ active: tupperFilter === filter.id }"
+                @click="tupperFilter = filter.id"
+              >
+                {{ filter.label }}
+              </button>
+            </div>
+          </div>
+          <div v-if="!filteredTuppers.length" class="empty-state tupper-empty-state">
+            <div class="tupper-empty-icon"><PhCookingPot :size="34" weight="regular" /></div>
+            <h2>
+              {{ tuppers.length ? 'No hay tuppers con este filtro' : 'Tu nevera empieza aquí' }}
+            </h2>
+            <p>
+              {{
+                tuppers.length
+                  ? 'Prueba con otra búsqueda o cambia el filtro para ver el resto.'
+                  : 'Anota lo que guardes y tendrás siempre a mano sus raciones y fechas.'
+              }}
+            </p>
+            <button
+              v-if="!tuppers.length"
+              type="button"
+              class="primary-button"
+              @click="openNewTupper"
+            >
+              <PhPlus :size="18" /> Añadir mi primer tupper
+            </button>
+          </div>
+          <section v-else class="tuppers-grid" aria-label="Listado de tuppers">
+            <article
+              v-for="tupper in filteredTuppers"
+              :key="tupper.id"
+              class="tupper-card"
+              :class="`status-${tupperStatus(tupper)}`"
+            >
+              <div class="tupper-card-header">
+                <div class="tupper-card-icon"><PhCookingPot :size="22" weight="regular" /></div>
+                <span class="tupper-status">{{ tupperStatusLabel(tupper) }}</span>
+                <div class="tupper-card-actions">
+                  <button
+                    type="button"
+                    class="card-icon-button"
+                    :aria-label="`Editar ${tupper.name}`"
+                    title="Editar"
+                    @click="editTupper(tupper)"
+                  >
+                    <PhNotePencil :size="18" />
+                  </button>
+                  <button
+                    type="button"
+                    class="card-icon-button danger"
+                    :aria-label="`Borrar ${tupper.name}`"
+                    title="Borrar"
+                    @click="deleteTupper(tupper)"
+                  >
+                    <PhX :size="18" />
+                  </button>
+                </div>
+              </div>
+              <h2>{{ tupper.name }}</h2>
+              <p v-if="tupper.notes" class="tupper-notes">{{ tupper.notes }}</p>
+              <div class="tupper-portion-row">
+                <div>
+                  <strong>{{ tupper.portions }}</strong
+                  ><span>{{ tupper.portions === 1 ? 'ración' : 'raciones' }}</span>
+                </div>
+                <div class="portion-controls" aria-label="Cambiar raciones">
+                  <button
+                    type="button"
+                    aria-label="Restar una ración"
+                    :disabled="!tupper.portions"
+                    @click="changeTupperPortions(tupper, -1)"
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Añadir una ración"
+                    @click="changeTupperPortions(tupper, 1)"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+              <div class="tupper-dates">
+                <div>
+                  <span>Guardado</span><strong>{{ formatTupperDate(tupper.stored_at) }}</strong>
+                </div>
+                <div>
+                  <span>Caduca</span><strong>{{ formatTupperDate(tupper.expires_at) }}</strong>
+                </div>
+              </div>
+              <div class="tupper-card-footer">
+                <span v-if="tupper.location"><PhHouse :size="15" /> {{ tupper.location }}</span>
+                <span v-else><PhHouse :size="15" /> Nevera</span>
+                <small>{{ tupperStatusMessage(tupper) }}</small>
+              </div>
             </article>
           </section>
         </section>
@@ -2584,7 +3040,7 @@ onUnmounted(() => {
                       >
                     </div>
                     <button
-                      v-else
+                      v-if="!currentDay(day.isoDate, day.weekStart).meals[meal].items.length"
                       class="empty-meal"
                       @click.stop="openEditor(day.isoDate, day.weekStart)"
                     >
@@ -2633,8 +3089,39 @@ onUnmounted(() => {
       </section>
     </main>
 
+    <dialog v-if="tupperEditorOpen" open class="modal-backdrop" @click.self="closeTupperEditor">
+      <form class="modal-card tupper-editor-card" @submit.prevent="saveTupper">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">{{ tupperDraft.id ? 'EDITAR TUPPER' : 'NUEVO TUPPER' }}</p>
+            <h2>{{ tupperDraft.id ? 'Actualiza sus datos' : 'Añade algo a la nevera' }}</h2>
+          </div>
+          <button type="button" class="icon-button" aria-label="Cerrar" @click="closeTupperEditor">
+            <PhX :size="22" weight="regular" />
+          </button>
+        </div>
+        <div class="tupper-editor-scroll">
+          <label class="field-label">Qué has guardado *<input v-model="tupperDraft.name" type="text" maxlength="100" placeholder="Ej.: Lentejas con verduras" autofocus /></label>
+          <div class="tupper-form-grid">
+            <label class="field-label">Raciones *<input v-model="tupperDraft.portions" type="number" min="1" max="99" step="1" inputmode="numeric" /></label>
+            <label class="field-label">Dónde está <input v-model="tupperDraft.location" type="text" maxlength="60" placeholder="Ej.: Balda de arriba" /></label>
+          </div>
+          <div class="tupper-form-grid">
+            <label class="field-label">Lo guardé el *<input v-model="tupperDraft.stored_at" type="date" required /></label>
+            <label class="field-label">Caduca el *<input v-model="tupperDraft.expires_at" type="date" required /></label>
+          </div>
+          <label class="field-label">Nota <textarea v-model="tupperDraft.notes" rows="3" maxlength="240" placeholder="Ej.: descongelar la noche anterior"></textarea></label>
+          <p class="tupper-form-hint"><PhCheckCircle :size="17" /> Se guarda en este navegador, asociado a tu cuenta.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-button" @click="closeTupperEditor">Cancelar</button>
+          <button type="submit" class="primary-button">{{ tupperDraft.id ? 'Guardar cambios' : 'Guardar tupper' }}</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog v-if="editorOpen" open class="modal-backdrop" @click.self="closeEditor">
-      <div class="modal-card">
+      <div class="modal-card day-editor-card">
         <div class="modal-header">
           <div>
             <p class="eyebrow">EDITAR DÍA</p>
@@ -2649,33 +3136,57 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="editor-scroll">
-          <div v-if="dailyOptions.filter((option) => option.active).length" class="editor-options">
-            <span class="field-label">Condiciones del día</span
-            ><label
-              v-for="option in dailyOptions.filter((item) => item.active)"
-              :key="option.id"
-              class="option-check"
-              ><input
-                type="checkbox"
-                :checked="optionIsSelected(option.id)"
-                @change="toggleOption(option.id)"
-              /><span class="option-badge" :class="`option-${option.color}`"
-                ><component
-                  :is="optionIcon(option)"
-                  :size="15"
-                  weight="regular"
-                  aria-hidden="true"
-                />
-                {{ option.name }}</span
-              ></label
-            >
-          </div>
+          <section
+            v-if="dailyOptions.filter((option) => option.active).length"
+            class="editor-options"
+            aria-labelledby="day-conditions-title"
+          >
+            <div class="editor-section-heading">
+              <div>
+                <span class="editor-section-kicker">CONTEXTO</span>
+                <strong id="day-conditions-title">Condiciones del día</strong>
+              </div>
+              <span class="editor-section-count"
+                >{{ draftDay.option_ids.length }} seleccionadas</span
+              >
+            </div>
+            <div class="option-check-list">
+              <label
+                v-for="option in dailyOptions.filter((item) => item.active)"
+                :key="option.id"
+                class="option-check"
+              >
+                <input
+                  type="checkbox"
+                  :checked="optionIsSelected(option.id)"
+                  @change="toggleOption(option.id)"
+                /><span class="option-badge" :class="`option-${option.color}`"
+                  ><component
+                    :is="optionIcon(option)"
+                    :size="15"
+                    weight="regular"
+                    aria-hidden="true"
+                  />
+                  {{ option.name }}</span
+                >
+              </label>
+            </div>
+          </section>
           <div v-for="meal in enabledMeals" :key="meal" class="editor-meal">
             <div class="editor-meal-heading">
-              <span
-                ><component :is="mealIcons[meal]" :size="19" weight="regular" aria-hidden="true" />
-                {{ mealLabels[meal] }}</span
-              ><button class="text-button" @click="addDish(meal)">
+              <span class="editor-meal-title">
+                <span class="editor-meal-icon"
+                  ><component
+                    :is="mealIcons[meal]"
+                    :size="19"
+                    weight="regular"
+                    aria-hidden="true" /></span
+                ><span>
+                  <strong>{{ mealLabels[meal] }}</strong>
+                  <small>{{ mealDraftSummary(meal) }}</small>
+                </span>
+              </span>
+              <button class="text-button meal-add-button" @click="addDish(meal)">
                 <PhPlus :size="16" weight="regular" /> Añadir plato
               </button>
             </div>
@@ -2700,8 +3211,30 @@ onUnmounted(() => {
               </div>
             </div>
             <details class="meal-more-options">
-              <summary>Más opciones</summary>
+              <summary>
+                <span class="more-options-summary-copy">
+                  <span class="more-options-icon"><PhGear :size="16" weight="regular" /></span>
+                  <span
+                    ><strong>Más opciones</strong
+                    ><small>{{ mealMoreOptionsSummary(meal) }}</small></span
+                  >
+                </span>
+                <PhCaretDown :size="17" weight="bold" class="more-options-chevron" />
+              </summary>
               <div class="more-options-content">
+                <div class="more-options-section-heading">
+                  <div>
+                    <strong>Avisos</strong>
+                    <small>Activa recordatorios para esta comida.</small>
+                  </div>
+                  <button
+                    type="button"
+                    class="add-alert-button compact-add-alert"
+                    @click="addCustomAlert(meal)"
+                  >
+                    <PhPlus :size="15" weight="regular" /> Añadir aviso
+                  </button>
+                </div>
                 <div class="meal-alert-list">
                   <div
                     v-for="alert in draftDay.meals[meal].alerts"
@@ -2821,23 +3354,23 @@ onUnmounted(() => {
                     >
                   </div>
                 </div>
-                <button type="button" class="add-alert-button" @click="addCustomAlert(meal)">
-                  <PhPlus :size="16" weight="regular" /> Añadir aviso solo a esta comida</button
-                ><label class="field-label"
-                  >Nota de la comida<textarea
+                <label class="field-label meal-note-field"
+                  >Nota de la comida<span class="field-hint"
+                    >Algo que quieras recordar solo para esta comida</span
+                  ><textarea
                     v-model="draftDay.meals[meal].note"
                     rows="2"
-                    placeholder="Nota opcional"
+                    placeholder="Ej.: dejar preparado la noche anterior"
                   ></textarea>
                 </label>
               </div>
             </details>
           </div>
-          <label class="field-label"
+          <label class="field-label day-notes-field"
             >Notas del día<textarea
               v-model="draftDay.notes"
               rows="3"
-              placeholder="Preparación, compras o recordatorios"
+              placeholder="Preparación, compras o recordatorios para todo el día"
             ></textarea>
           </label>
         </div>

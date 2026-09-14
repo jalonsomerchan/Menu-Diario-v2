@@ -47,3 +47,32 @@ export function getJson(path, token) {
 export function postJson(path, token, body) {
   return apiRequest(path, token, { method: 'POST', body: JSON.stringify(body) })
 }
+
+export async function uploadFile(path, token, file, fields = {}) {
+  const formData = new FormData()
+  Object.entries(fields).forEach(([key, value]) => formData.append(key, String(value)))
+  formData.append('file', file)
+
+  const response = await fetch(`${API_BASE}/${path.replace(/^\//, '')}`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || payload.ok === false) {
+    const authReason = import.meta.env.DEV ? payload.details?.auth?.reason : ''
+    const detail = authReason ? ` (${authReason})` : ''
+    throw new ApiError(
+      `${payload.message || `La API respondió con ${response.status}.`}${detail}`,
+      {
+        status: response.status,
+        code: payload.code || '',
+        details: payload.details || null,
+      },
+    )
+  }
+  return payload.data ?? payload
+}
