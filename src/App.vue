@@ -2550,14 +2550,6 @@ onUnmounted(() => {
               {{ loadingMore ? 'Cargando más días…' : 'Sigue bajando para ver más días' }}
             </div>
           </section>
-          <button
-            v-if="dayEntries.length"
-            class="floating-add"
-            aria-label="Añadir plato al primer día visible"
-            @click="openEditor(dayEntries[0].isoDate, dayEntries[0].weekStart)"
-          >
-            <PhPlus :size="24" weight="regular" aria-hidden="true" /><span>Añadir plato</span>
-          </button>
         </template>
       </template>
       <section v-else class="loading-card app-loading-card">

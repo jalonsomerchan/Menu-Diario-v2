@@ -2545,26 +2545,6 @@ h2 {
 .edit-day span {
   margin-left: auto;
 }
-.floating-add {
-  position: fixed;
-  right: max(1rem, calc((100vw - 980px) / 2));
-  bottom: 1rem;
-  z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 52px;
-  padding: 0.75rem 1rem;
-  color: #fff;
-  background: var(--blue);
-  border: 0;
-  border-radius: 999px;
-  box-shadow: 0 12px 28px rgba(23, 105, 232, 0.3);
-  font-weight: 700;
-}
-.floating-add .material-symbols-rounded {
-  font-size: 1.5rem;
-}
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -2760,10 +2740,6 @@ textarea:focus,
   }
   .meal-card {
     min-height: 72px;
-  }
-  .floating-add {
-    right: 1rem;
-    bottom: 1rem;
   }
   .modal-backdrop {
     padding: 0;
