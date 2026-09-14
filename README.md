@@ -49,7 +49,7 @@ La aplicación incluye manifest, iconos instalables, service worker para la shel
 
 ## Despliegue en GitHub Pages
 
-El workflow de [GitHub Actions](.github/workflows/deploy.yml) publica automáticamente la carpeta `dist` en GitHub Pages cada vez que se actualiza `main`. La configuración detecta automáticamente el nombre del repositorio para usar la base `/Menu-Diario-v2/` y genera `404.html` para mantener funcionando las rutas de Vue Router.
+El workflow de [GitHub Actions](.github/workflows/deploy.yml) publica automáticamente la carpeta `dist` en GitHub Pages cada vez que se actualiza `main`. El frontend está preparado para el dominio personalizado `https://menudiario2.alon.one/`, usa la base `/` y genera `404.html` para mantener funcionando las rutas de Vue Router.
 
 En el repositorio, configura estos secretos en `Settings → Secrets and variables → Actions` para activar el acceso con Google en producción:
 
@@ -58,4 +58,4 @@ En el repositorio, configura estos secretos en `Settings → Secrets and variabl
 - `VITE_FIREBASE_PROJECT_ID`
 - `VITE_FIREBASE_APP_ID`
 
-Opcionalmente, crea la variable `VITE_API_BASE` si la API no es `https://alon.one/api`. En `Settings → Pages`, selecciona **GitHub Actions** como método de publicación.
+La API de producción sigue siendo `https://alon.one/api`. Solo crea la variable `VITE_API_BASE` si cambia esa URL. En `Settings → Pages`, selecciona **GitHub Actions** como método de publicación y configura `menudiario2.alon.one` como dominio personalizado.
