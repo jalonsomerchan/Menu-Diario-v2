@@ -304,15 +304,6 @@ const shoppingMeals = computed(() =>
     })
   }),
 )
-const shoppingGroups = computed(() => {
-  const groups = new Map()
-  shoppingItems.value.forEach((item, index) => {
-    const category = item.category || 'Otros'
-    if (!groups.has(category)) groups.set(category, [])
-    groups.get(category).push({ ...item, index })
-  })
-  return [...groups.entries()].map(([category, items]) => ({ category, items }))
-})
 const shoppingToBuyItems = computed(() =>
   shoppingItems.value.filter((_, index) => !shoppingChecked.value.has(index)),
 )
@@ -727,9 +718,7 @@ function previousShoppingStep() {
 }
 
 function shoppingAlexaCommand() {
-  const labels = shoppingToBuyItems.value.map((item) =>
-    [item.name, item.quantity].filter(Boolean).join(' '),
-  )
+  const labels = shoppingToBuyItems.value
   if (labels.length <= 1) return labels[0] || ''
   if (labels.length === 2) return `${labels[0]} y ${labels[1]}`
   return `${labels.slice(0, -1).join(', ')} y ${labels.at(-1)}`
@@ -776,7 +765,9 @@ async function generateShoppingList() {
         dishes: meal.dishes,
       })),
     })
-    shoppingItems.value = data.items || []
+    shoppingItems.value = (data.items || [])
+      .map((item) => (typeof item === 'string' ? item : item?.name || ''))
+      .filter(Boolean)
     shoppingChecked.value = new Set()
     shoppingErrorDetails.value = ''
     notice.value = 'Lista generada. Revísala antes de ir a comprar.'
@@ -800,14 +791,7 @@ async function generateShoppingList() {
 
 async function copyShoppingList() {
   if (!shoppingItems.value.length) return
-  const text = shoppingGroups.value
-    .map(
-      (group) =>
-        `${group.category}\n${group.items
-          .map((item) => `☐ ${item.name}${item.quantity ? ` — ${item.quantity}` : ''}`)
-          .join('\n')}`,
-    )
-    .join('\n\n')
+  const text = shoppingItems.value.map((item) => `☐ ${item}`).join('\n')
   try {
     await navigator.clipboard.writeText(text)
     notice.value = 'Lista copiada al portapapeles.'
@@ -1692,9 +1676,7 @@ function dragOverDay(dayKey, requestedWeek = '') {
   }
 }
 function isDropTargetDay(dayKey, requestedWeek = '') {
-  return (
-    dropTarget.value?.day_date === dayKey && dropTarget.value?.week_start === requestedWeek
-  )
+  return dropTarget.value?.day_date === dayKey && dropTarget.value?.week_start === requestedWeek
 }
 function isDropTarget(dayKey, meal, requestedWeek = '') {
   return (
@@ -2343,31 +2325,23 @@ onUnmounted(() => {
                     <PhSpeakerHigh :size="17" /> Enviar a Alexa
                   </a>
                 </div>
-                <div class="shopping-groups">
-                  <section
-                    v-for="group in shoppingGroups"
-                    :key="group.category"
-                    class="shopping-group"
+                <div class="shopping-items-list">
+                  <label
+                    v-for="(item, index) in shoppingItems"
+                    :key="`${item}-${index}`"
+                    class="shopping-item"
+                    :class="{ checked: shoppingItemChecked(index) }"
                   >
-                    <h3>{{ group.category }}</h3>
-                    <label
-                      v-for="item in group.items"
-                      :key="`${item.name}-${item.index}`"
-                      class="shopping-item"
-                      :class="{ checked: shoppingItemChecked(item.index) }"
+                    <input
+                      type="checkbox"
+                      :checked="shoppingItemChecked(index)"
+                      @change="toggleShoppingItem(index)"
+                    />
+                    <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
+                    <span class="shopping-item-copy"
+                      ><strong>{{ item }}</strong></span
                     >
-                      <input
-                        type="checkbox"
-                        :checked="shoppingItemChecked(item.index)"
-                        @change="toggleShoppingItem(item.index)"
-                      />
-                      <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
-                      <span class="shopping-item-copy"
-                        ><strong>{{ item.name }}</strong
-                        ><small v-if="item.quantity">{{ item.quantity }}</small></span
-                      >
-                    </label>
-                  </section>
+                  </label>
                 </div>
                 <div class="shopping-result-actions">
                   <button type="button" class="secondary-button" @click="previousShoppingStep">
@@ -2602,7 +2576,9 @@ onUnmounted(() => {
                         class="dish-chip"
                         draggable="true"
                         :title="`Arrastra ${dish} a otro día`"
-                        @dragstart.stop="startDishDrag($event, day.isoDate, meal, dish, day.weekStart)"
+                        @dragstart.stop="
+                          startDishDrag($event, day.isoDate, meal, dish, day.weekStart)
+                        "
                         @dragend="clearDishDrag"
                         >{{ dish }}</span
                       >
@@ -2764,7 +2740,11 @@ onUnmounted(() => {
                         @click="sendAlertNow(meal, alert)"
                       >
                         <PhLightning :size="14" weight="regular" />
-                        {{ sendingAlertKey === alertActionKey(meal, alert) ? 'Enviando…' : 'Enviar ahora' }}</button
+                        {{
+                          sendingAlertKey === alertActionKey(meal, alert)
+                            ? 'Enviando…'
+                            : 'Enviar ahora'
+                        }}</button
                       ><button
                         v-if="alert.type === 'global' && alert.overridden"
                         type="button"
@@ -2833,10 +2813,12 @@ onUnmounted(() => {
                           v-model="alert.message"
                           type="text"
                           maxlength="240"
-                          placeholder="Texto del aviso" /><span class="field-hint"
+                          placeholder="Texto del aviso"
+                        /><span class="field-hint"
                           >Variables: %fecha · %platos · %comida · %aviso</span
                         ></label
-                    ></template>
+                      ></template
+                    >
                   </div>
                 </div>
                 <button type="button" class="add-alert-button" @click="addCustomAlert(meal)">
@@ -3045,18 +3027,16 @@ onUnmounted(() => {
               >
                 <span class="alert-admin-icon" aria-hidden="true">
                   <PhPlus v-if="entry.id === 'new'" :size="20" weight="regular" />
-                  <component
-                    v-else
-                    :is="alertIcon(entry.alert)"
-                    :size="20"
-                    weight="regular"
-                  />
+                  <component v-else :is="alertIcon(entry.alert)" :size="20" weight="regular" />
                 </span>
                 <div class="alert-admin-title">
                   <strong>{{ entry.id === 'new' ? 'Nuevo aviso' : entry.alert.name }}</strong
                   ><small v-if="entry.alert"
                     >{{ entry.alert.time }} · {{ alertDayOffsetLabel(entry.alert.day_offset) }} ·
-                    {{ entry.alert.scope === 'all' ? 'Todas las comidas' : mealLabels[entry.alert.scope]
+                    {{
+                      entry.alert.scope === 'all'
+                        ? 'Todas las comidas'
+                        : mealLabels[entry.alert.scope]
                     }}<span v-if="entry.alert.default_enabled"> · Activo por defecto</span></small
                   ><small v-else>Configura un aviso reutilizable</small>
                 </div>
@@ -3065,7 +3045,13 @@ onUnmounted(() => {
                   :aria-expanded="alertEditorOpen === entry.id"
                   @click="entry.id === 'new' ? closeAlertEditor() : toggleAlertEditor(entry.alert)"
                 >
-                  {{ alertEditorOpen === entry.id ? 'Cerrar' : entry.id === 'new' ? 'Nuevo' : 'Editar' }}
+                  {{
+                    alertEditorOpen === entry.id
+                      ? 'Cerrar'
+                      : entry.id === 'new'
+                        ? 'Nuevo'
+                        : 'Editar'
+                  }}
                 </button>
                 <button
                   v-if="entry.alert"
@@ -3098,7 +3084,8 @@ onUnmounted(() => {
                     </p>
                   </div>
                   <div class="alert-form-row">
-                    <label class="field-label">Hora<input v-model="alertDraft.time" type="time" /></label
+                    <label class="field-label"
+                      >Hora<input v-model="alertDraft.time" type="time" /></label
                     ><label class="field-label"
                       >Día del aviso<select v-model.number="alertDraft.day_offset">
                         <option v-for="days in 31" :key="days - 1" :value="days - 1">
@@ -3139,7 +3126,11 @@ onUnmounted(() => {
                     ><label class="option-active"
                       ><input v-model="alertDraft.active" type="checkbox" /> Visible</label
                     ><label class="field-label alert-order"
-                      >Orden<input v-model.number="alertDraft.order" type="number" min="0" max="9999"
+                      >Orden<input
+                        v-model.number="alertDraft.order"
+                        type="number"
+                        min="0"
+                        max="9999"
                     /></label>
                   </div>
                   <button class="primary-button" :disabled="saving" @click="saveAlert">

@@ -1153,7 +1153,8 @@ textarea:focus {
   background: #eef0ff;
   text-decoration: none;
 }
-.shopping-groups {
+.shopping-groups,
+.shopping-items-list {
   display: grid;
   gap: 1rem;
   max-height: 440px;
@@ -2270,7 +2271,7 @@ h2 {
   align-items: center;
   gap: 0.55rem;
   width: max-content;
-  max-width: min( calc(100vw - 2rem), 520px);
+  max-width: min(calc(100vw - 2rem), 520px);
   padding: 0.8rem 1rem;
   color: #fff;
   background: #1f5fbf;
