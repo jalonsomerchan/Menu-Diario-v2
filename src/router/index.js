@@ -5,6 +5,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'dashboard' },
     { path: '/platos', name: 'dishes' },
+    { path: '/compra', name: 'shopping' },
     { path: '/calendario', name: 'calendar' },
     { path: '/ajustes', name: 'settings' },
     { path: '/compartir/:token', name: 'shared-day' },

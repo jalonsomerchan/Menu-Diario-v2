@@ -37,6 +37,7 @@ import {
   PhPlus,
   PhSignOut,
   PhShoppingCart,
+  PhSpeakerHigh,
   PhSmiley,
   PhSparkle,
   PhSpinnerGap,
@@ -48,14 +49,8 @@ import {
   PhWarningCircle,
   PhX,
 } from '@phosphor-icons/vue'
-import { getJson, postJson } from './lib/api'
-import {
-  formatDay,
-  fromIsoDate,
-  mondayOf,
-  shiftDate,
-  toIsoDate,
-} from './lib/dates'
+import { ApiError, getJson, postJson } from './lib/api'
+import { formatDay, fromIsoDate, mondayOf, shiftDate, toIsoDate } from './lib/dates'
 import {
   getFirebaseAuth,
   hasFirebaseConfig,
@@ -188,6 +183,20 @@ const calendarDays = ref(new Map())
 const calendarLoading = ref(false)
 const calendarDetailOpen = ref(false)
 const calendarSelectedDay = ref(null)
+const shoppingSelectedDays = ref(new Set())
+const shoppingSelectionInitialized = ref(false)
+const shoppingItems = ref([])
+const shoppingGenerating = ref(false)
+const shoppingChecked = ref(new Set())
+const shoppingErrorDetails = ref('')
+const shoppingErrorModal = ref(null)
+const shoppingStep = ref(1)
+const shoppingSteps = [
+  { id: 1, label: 'Días' },
+  { id: 2, label: 'Platos' },
+  { id: 3, label: 'Lista' },
+]
+const shoppingAlexaUrl = 'alexa://index.html#lists/shopping'
 const rouletteOpen = ref(false)
 const rouletteSpinning = ref(false)
 const rouletteContextLoading = ref(false)
@@ -234,6 +243,7 @@ const baseUrl = import.meta.env.BASE_URL
 const publicAsset = (path) => `${baseUrl}${path.replace(/^\/+/, '')}`
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
+const isShopping = computed(() => route.name === 'shopping')
 const isCalendar = computed(() => route.name === 'calendar')
 const isShared = computed(() => route.name === 'shared-day')
 const isDashboard = computed(() => route.name === 'dashboard')
@@ -277,6 +287,33 @@ const calendarWeeks = computed(() =>
   Array.from({ length: Math.ceil(calendarCells.value.length / 7) }, (_, index) =>
     calendarCells.value.slice(index * 7, index * 7 + 7),
   ),
+)
+const shoppingDayEntries = computed(() => dayEntries.value.slice(0, 7))
+const shoppingMeals = computed(() =>
+  shoppingDayEntries.value.flatMap((entry) => {
+    if (!shoppingSelectedDays.value.has(entry.isoDate)) return []
+    const day = currentDay(entry.isoDate, entry.weekStart)
+    if (day.skipped) return []
+    return enabledMeals.value.flatMap((meal) => {
+      const mealState = day.meals[meal]
+      const dishes = mealState.items.filter((item) => String(item).trim())
+      return mealState.skipped || !dishes.length
+        ? []
+        : [{ dayDate: entry.isoDate, date: entry.date, meal, dishes }]
+    })
+  }),
+)
+const shoppingGroups = computed(() => {
+  const groups = new Map()
+  shoppingItems.value.forEach((item, index) => {
+    const category = item.category || 'Otros'
+    if (!groups.has(category)) groups.set(category, [])
+    groups.get(category).push({ ...item, index })
+  })
+  return [...groups.entries()].map(([category, items]) => ({ category, items }))
+})
+const shoppingToBuyItems = computed(() =>
+  shoppingItems.value.filter((_, index) => !shoppingChecked.value.has(index)),
 )
 const hasUnreadNotifications = computed(() => notificationUnreadCount.value > 0)
 const defaultRouletteDishes = [
@@ -351,9 +388,7 @@ const draftDayCompleted = computed(() =>
 const draftDayHasMeals = computed(() =>
   Boolean(
     draftDay.value &&
-      allMeals.some((meal) =>
-        draftDay.value.meals[meal].items.some((item) => String(item).trim()),
-      ),
+    allMeals.some((meal) => draftDay.value.meals[meal].items.some((item) => String(item).trim())),
   ),
 )
 const sharedDayTitle = computed(() =>
@@ -566,12 +601,215 @@ async function loadDashboardRange() {
     applyContext(data)
     applyRangeData(data, true)
     dayEntries.value = buildRangeDayEntries(data)
+    initializeShoppingSelection()
     nextRangeStart.value = shiftDate(rangeEnd, 1)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
+    if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
   } finally {
     loading.value = false
   }
+}
+
+function initializeShoppingSelection() {
+  if (shoppingSelectionInitialized.value || !shoppingDayEntries.value.length) return
+  shoppingSelectedDays.value = new Set(shoppingDayEntries.value.map((entry) => entry.isoDate))
+  shoppingSelectionInitialized.value = true
+}
+
+async function loadShoppingRange() {
+  if (!user.value) return
+  if (!dayEntries.value.length) {
+    loading.value = true
+    error.value = ''
+    try {
+      const rangeStart = toIsoDate(new Date())
+      const rangeEnd = shiftDate(rangeStart, RANGE_PAGE_DAYS - 1)
+      const data = await fetchRange(rangeStart, rangeEnd)
+      applyContext(data)
+      applyRangeData(data, true)
+      dayEntries.value = buildRangeDayEntries(data)
+      nextRangeStart.value = shiftDate(rangeEnd, 1)
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
+      if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
+    } finally {
+      loading.value = false
+    }
+  }
+  initializeShoppingSelection()
+}
+
+function toggleShoppingDay(dayDate) {
+  const selected = new Set(shoppingSelectedDays.value)
+  if (selected.has(dayDate)) selected.delete(dayDate)
+  else selected.add(dayDate)
+  shoppingSelectedDays.value = selected
+  shoppingItems.value = []
+}
+
+function toggleShoppingItem(index) {
+  const checked = new Set(shoppingChecked.value)
+  if (checked.has(index)) checked.delete(index)
+  else checked.add(index)
+  shoppingChecked.value = checked
+}
+
+function shoppingItemChecked(index) {
+  return shoppingChecked.value.has(index)
+}
+
+function formatShoppingErrorDetails(reason) {
+  if (!(reason instanceof Error)) return ''
+  if (!(reason instanceof ApiError)) return `${reason.name}: ${reason.message}`
+  const metadata = [
+    reason.code ? `code: ${reason.code}` : '',
+    reason.status ? `http_status: ${reason.status}` : '',
+  ].filter(Boolean)
+  if (!reason.details) return [...metadata, `message: ${reason.message}`].filter(Boolean).join('\n')
+  if (typeof reason.details === 'string') return [...metadata, reason.details].join('\n')
+  const details = Object.entries(reason.details)
+    .map(([key, value]) => {
+      const printable = typeof value === 'string' ? value : JSON.stringify(value)
+      return `${key}: ${printable}`
+    })
+    .join('\n')
+  return [...metadata, details].filter(Boolean).join('\n')
+}
+
+function showShoppingError(title, message, details = '', retry = false) {
+  shoppingErrorModal.value = { title, message, details, retry }
+}
+
+function closeShoppingError() {
+  shoppingErrorModal.value = null
+}
+
+function retryShoppingGeneration() {
+  closeShoppingError()
+  void generateShoppingList()
+}
+
+function canEnterShoppingStep(step) {
+  if (step === 1) return true
+  if (step === 2) return shoppingSelectedDays.value.size > 0
+  return shoppingMeals.value.length > 0 && shoppingItems.value.length > 0
+}
+
+function selectShoppingStep(step) {
+  if (step > shoppingStep.value && !canEnterShoppingStep(step)) return
+  shoppingStep.value = step
+}
+
+function nextShoppingStep() {
+  if (shoppingStep.value === 1) {
+    if (!shoppingSelectedDays.value.size) return
+    shoppingStep.value = 2
+    return
+  }
+  if (shoppingStep.value === 2) {
+    if (!shoppingMeals.value.length) return
+    shoppingStep.value = 3
+    void generateShoppingList()
+  }
+}
+
+function previousShoppingStep() {
+  if (shoppingStep.value > 1) shoppingStep.value -= 1
+}
+
+function shoppingAlexaCommand() {
+  const labels = shoppingToBuyItems.value.map((item) =>
+    [item.name, item.quantity].filter(Boolean).join(' '),
+  )
+  if (labels.length <= 1) return labels[0] || ''
+  if (labels.length === 2) return `${labels[0]} y ${labels[1]}`
+  return `${labels.slice(0, -1).join(', ')} y ${labels.at(-1)}`
+}
+
+async function sendShoppingListToAlexa() {
+  const command = `Añade a la lista de la compra ${shoppingAlexaCommand()}`.trim()
+  if (!shoppingToBuyItems.value.length) {
+    showShoppingError(
+      'No hay productos pendientes',
+      'Marca algún producto como pendiente antes de enviarlo a Alexa.',
+    )
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(command)
+    notice.value = 'Orden copiada. Abriendo Alexa…'
+    window.setTimeout(() => {
+      notice.value = ''
+    }, 3500)
+    window.location.href = shoppingAlexaUrl
+  } catch (reason) {
+    showShoppingError(
+      'No se ha podido preparar Alexa',
+      'No se pudo copiar la orden para Alexa. Copia el texto desde el detalle técnico e inténtalo de nuevo.',
+      reason instanceof Error
+        ? `${reason.name}: ${reason.message}\n\nOrden:\n${command}`
+        : `Orden:\n${command}`,
+    )
+  }
+}
+
+async function generateShoppingList() {
+  if (shoppingGenerating.value || !shoppingMeals.value.length) return
+  shoppingGenerating.value = true
+  error.value = ''
+  shoppingErrorDetails.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/generate_shopping_list', userToken.value, {
+      meals: shoppingMeals.value.map((meal) => ({
+        day_date: meal.dayDate,
+        meal: meal.meal,
+        dishes: meal.dishes,
+      })),
+    })
+    shoppingItems.value = data.items || []
+    shoppingChecked.value = new Set()
+    shoppingErrorDetails.value = ''
+    notice.value = 'Lista generada. Revísala antes de ir a comprar.'
+    window.setTimeout(() => {
+      notice.value = ''
+    }, 3500)
+  } catch (reason) {
+    error.value =
+      reason instanceof Error ? reason.message : 'No se pudo generar la lista de la compra.'
+    shoppingErrorDetails.value = formatShoppingErrorDetails(reason)
+    showShoppingError(
+      'No se ha podido generar la lista',
+      error.value,
+      shoppingErrorDetails.value,
+      true,
+    )
+  } finally {
+    shoppingGenerating.value = false
+  }
+}
+
+async function copyShoppingList() {
+  if (!shoppingItems.value.length) return
+  const text = shoppingGroups.value
+    .map(
+      (group) =>
+        `${group.category}\n${group.items
+          .map((item) => `☐ ${item.name}${item.quantity ? ` — ${item.quantity}` : ''}`)
+          .join('\n')}`,
+    )
+    .join('\n\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    notice.value = 'Lista copiada al portapapeles.'
+  } catch {
+    error.value = 'No se pudo copiar la lista. Puedes seleccionarla manualmente.'
+    showShoppingError('No se ha podido copiar la lista', error.value)
+  }
+  window.setTimeout(() => {
+    notice.value = ''
+  }, 2500)
 }
 
 async function loadCalendarMonth() {
@@ -727,6 +965,13 @@ async function logout() {
   notificationUnreadCount.value = 0
   notificationsOpen.value = false
   menuOpen.value = false
+  shoppingSelectedDays.value = new Set()
+  shoppingSelectionInitialized.value = false
+  shoppingItems.value = []
+  shoppingChecked.value = new Set()
+  shoppingErrorDetails.value = ''
+  shoppingErrorModal.value = null
+  shoppingStep.value = 1
   telegram.value = {
     configured: false,
     connected: false,
@@ -890,6 +1135,9 @@ function openEditor(dayKey, requestedWeek = '') {
   draftDayKey.value = dayKey
   draftWeekStart.value = requestedWeek
   draftDay.value = normalizedDay(menus.value.get(requestedWeek)?.days?.[dayKey], true)
+  enabledMeals.value.forEach((meal) => {
+    if (!draftDay.value.meals[meal].items.length) draftDay.value.meals[meal].items.push('')
+  })
   editorOpen.value = true
 }
 function closeEditor() {
@@ -900,6 +1148,7 @@ function addDish(meal) {
 }
 function removeDish(meal, index) {
   draftDay.value.meals[meal].items.splice(index, 1)
+  if (!draftDay.value.meals[meal].items.length) draftDay.value.meals[meal].items.push('')
 }
 function optionIsSelected(id) {
   return Boolean(draftDay.value?.option_ids?.includes(Number(id)))
@@ -1433,6 +1682,10 @@ function goToDishes() {
   menuOpen.value = false
   router.push({ name: 'dishes' })
 }
+function goToShopping() {
+  menuOpen.value = false
+  router.push({ name: 'shopping' })
+}
 function goToCalendar() {
   menuOpen.value = false
   router.push({ name: 'calendar' })
@@ -1463,6 +1716,7 @@ function dismissInstallBanner() {
 
 watch([() => route.name, calendarMonth], () => {
   if (user.value && isCalendar.value) void loadCalendarMonth()
+  if (user.value && isShopping.value) void loadShoppingRange()
 })
 
 onMounted(async () => {
@@ -1529,11 +1783,21 @@ onUnmounted(() => {
         aria-label="Ir al dashboard"
         @click.prevent="goToDashboard"
       >
-        <img class="brand-icon" :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
+        <img
+          class="brand-icon"
+          :src="publicAsset('icons/menu-diario-96.png')"
+          alt=""
+          aria-hidden="true"
+        />
         <div><strong>Menu Diario</strong><small>Comer bien, cada día</small></div>
       </a>
       <div v-else class="brand-mark">
-        <img class="brand-icon" :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
+        <img
+          class="brand-icon"
+          :src="publicAsset('icons/menu-diario-96.png')"
+          alt=""
+          aria-hidden="true"
+        />
         <div><strong>Menu Diario</strong><small>Comer bien, cada día</small></div>
       </div>
       <div v-if="user" class="navigation-menu">
@@ -1555,6 +1819,8 @@ onUnmounted(() => {
             <PhHouse :size="19" weight="regular" /><span>Planificador</span></button
           ><button type="button" :class="{ active: isDishes }" @click="goToDishes">
             <PhForkKnife :size="19" weight="regular" /><span>Mis platos</span></button
+          ><button type="button" :class="{ active: isShopping }" @click="goToShopping">
+            <PhShoppingCart :size="19" weight="regular" /><span>Lista de la compra</span></button
           ><button type="button" :class="{ active: isCalendar }" @click="goToCalendar">
             <PhCalendarBlank :size="19" weight="regular" /><span>Calendario</span></button
           ><button type="button" :class="{ active: isSettings }" @click="goToSettings">
@@ -1673,7 +1939,9 @@ onUnmounted(() => {
           </div>
           <div class="shared-meal-list">
             <article v-for="meal in allMeals" :key="meal" class="shared-meal">
-              <span class="meal-icon"><component :is="mealIcons[meal]" :size="20" weight="regular" /></span>
+              <span class="meal-icon"
+                ><component :is="mealIcons[meal]" :size="20" weight="regular"
+              /></span>
               <div>
                 <strong>{{ mealLabels[meal] }}</strong>
                 <div v-if="shareData.day.meals[meal].items.length" class="shared-dishes">
@@ -1684,13 +1952,17 @@ onUnmounted(() => {
                   >
                 </div>
                 <span v-else class="detail-empty">Sin plato configurado</span>
-                <small v-if="shareData.day.meals[meal].note">{{ shareData.day.meals[meal].note }}</small>
+                <small v-if="shareData.day.meals[meal].note">{{
+                  shareData.day.meals[meal].note
+                }}</small>
               </div>
             </article>
           </div>
           <div v-if="shareData.day.notes" class="day-note">
             <PhNotePencil :size="20" weight="regular" />
-            <div><strong>Nota del día</strong><span>{{ shareData.day.notes }}</span></div>
+            <div>
+              <strong>Nota del día</strong><span>{{ shareData.day.notes }}</span>
+            </div>
           </div>
           <p class="shared-day-expiry">Este enlace caduca en 24 horas.</p>
         </div>
@@ -1713,7 +1985,7 @@ onUnmounted(() => {
       </section>
 
       <template v-else-if="user">
-        <div v-if="error" class="alert error-alert">{{ error }}</div>
+        <div v-if="error && !isShopping" class="alert error-alert">{{ error }}</div>
         <div v-if="notice" class="alert notice-alert">{{ notice }}</div>
         <section v-if="isDishes" class="catalog-page">
           <div class="page-heading catalog-heading">
@@ -1793,6 +2065,286 @@ onUnmounted(() => {
               </button>
             </article>
           </section>
+        </section>
+        <section v-else-if="isShopping" class="shopping-page">
+          <div class="page-heading shopping-heading">
+            <div>
+              <p class="eyebrow">ASISTENTE DE COMPRA</p>
+              <h1>Lista de la compra</h1>
+              <p class="muted">
+                Dile a la IA qué vas a cocinar y tendrás los ingredientes agrupados en segundos.
+              </p>
+            </div>
+          </div>
+          <nav class="shopping-wizard-progress" aria-label="Progreso de la lista de la compra">
+            <button
+              v-for="step in shoppingSteps"
+              :key="step.id"
+              type="button"
+              class="shopping-wizard-step"
+              :class="{ active: shoppingStep === step.id, completed: shoppingStep > step.id }"
+              :disabled="step.id > shoppingStep && !canEnterShoppingStep(step.id)"
+              :aria-current="shoppingStep === step.id ? 'step' : undefined"
+              @click="selectShoppingStep(step.id)"
+            >
+              <span>{{ step.id }}</span
+              ><strong>{{ step.label }}</strong>
+            </button>
+          </nav>
+          <div class="shopping-layout">
+            <section
+              v-if="shoppingStep === 1"
+              class="shopping-builder"
+              aria-labelledby="shopping-builder-title"
+            >
+              <div class="shopping-section-heading">
+                <div class="shopping-section-icon">
+                  <PhCalendarCheck :size="22" weight="regular" />
+                </div>
+                <div>
+                  <p class="eyebrow">PASO 1</p>
+                  <h2 id="shopping-builder-title">Elige los días</h2>
+                  <p class="muted">
+                    Partimos de tus próximos siete días. Puedes quitar los que no quieras cubrir.
+                  </p>
+                </div>
+              </div>
+              <div v-if="loading" class="shopping-loading">
+                <div class="spinner"></div>
+                Cargando tus próximos días…
+              </div>
+              <div v-else-if="!shoppingDayEntries.length" class="shopping-empty">
+                <PhCalendarBlank :size="30" weight="regular" />
+                <strong>Aún no hay días disponibles</strong>
+                <span>Vuelve a intentarlo cuando tu menú esté cargado.</span>
+              </div>
+              <div v-else class="shopping-day-picker">
+                <button
+                  v-for="entry in shoppingDayEntries"
+                  :key="entry.isoDate"
+                  type="button"
+                  class="shopping-day-option"
+                  :class="{ selected: shoppingSelectedDays.has(entry.isoDate) }"
+                  :aria-pressed="shoppingSelectedDays.has(entry.isoDate)"
+                  @click="toggleShoppingDay(entry.isoDate)"
+                >
+                  <span class="shopping-day-check"><PhCheck :size="15" weight="bold" /></span>
+                  <strong>{{ formatDay(entry.date) }}</strong>
+                  <small
+                    >{{
+                      shoppingMeals.filter((meal) => meal.dayDate === entry.isoDate).length
+                    }}
+                    comidas con plato</small
+                  >
+                </button>
+              </div>
+              <div class="shopping-selection-footer">
+                <span
+                  ><PhForkKnife :size="18" /> {{ shoppingMeals.length }}
+                  {{
+                    shoppingMeals.length === 1 ? 'comida seleccionada' : 'comidas seleccionadas'
+                  }}</span
+                >
+                <span class="shopping-selection-note"
+                  >La IA usará solo los platos configurados.</span
+                >
+              </div>
+              <div class="shopping-wizard-actions">
+                <span>Paso 1 de 3</span>
+                <button
+                  type="button"
+                  class="primary-button"
+                  :disabled="!shoppingSelectedDays.size"
+                  @click="nextShoppingStep"
+                >
+                  Revisar platos <PhArrowRight :size="17" />
+                </button>
+              </div>
+            </section>
+
+            <section
+              v-else-if="shoppingStep === 2"
+              class="shopping-builder shopping-review-step"
+              aria-labelledby="shopping-review-title"
+            >
+              <div class="shopping-section-heading">
+                <div class="shopping-section-icon"><PhForkKnife :size="22" weight="regular" /></div>
+                <div>
+                  <p class="eyebrow">PASO 2</p>
+                  <h2 id="shopping-review-title">Revisa tus platos</h2>
+                  <p class="muted">
+                    Estas son las comidas que enviaré a la IA para preparar tu lista.
+                  </p>
+                </div>
+              </div>
+              <div
+                v-if="shoppingMeals.length"
+                class="shopping-meal-preview shopping-meal-preview-large"
+              >
+                <article
+                  v-for="meal in shoppingMeals"
+                  :key="`${meal.dayDate}-${meal.meal}`"
+                  class="shopping-meal-preview-row"
+                >
+                  <span class="meal-icon"><component :is="mealIcons[meal.meal]" :size="18" /></span>
+                  <div>
+                    <small>{{ formatDay(meal.date) }} · {{ mealLabels[meal.meal] }}</small>
+                    <strong>{{ meal.dishes.join(' · ') }}</strong>
+                  </div>
+                </article>
+              </div>
+              <div v-else class="shopping-no-meals">No hay platos en los días seleccionados.</div>
+              <div class="shopping-wizard-actions">
+                <button type="button" class="secondary-button" @click="previousShoppingStep">
+                  <PhArrowLeft :size="17" /> Atrás
+                </button>
+                <button
+                  type="button"
+                  class="primary-button"
+                  :disabled="!shoppingMeals.length || shoppingGenerating"
+                  @click="nextShoppingStep"
+                >
+                  Generar lista <PhSparkle :size="17" weight="fill" />
+                </button>
+              </div>
+            </section>
+
+            <section v-else class="shopping-result" aria-labelledby="shopping-result-title">
+              <div class="shopping-section-heading">
+                <div class="shopping-section-icon result-icon">
+                  <PhShoppingCart :size="22" weight="regular" />
+                </div>
+                <div>
+                  <p class="eyebrow">PASO 3</p>
+                  <h2 id="shopping-result-title">Tu lista</h2>
+                  <p class="muted">
+                    Revisa la propuesta, marca lo que ya tengas y envíala a Alexa.
+                  </p>
+                </div>
+              </div>
+              <div
+                v-if="shoppingGenerating"
+                class="shopping-generating"
+                role="status"
+                aria-live="polite"
+              >
+                <div class="shopping-generating-orbit"><PhSparkle :size="25" weight="fill" /></div>
+                <strong>Preparando tu compra…</strong>
+                <span>Estoy agrupando ingredientes repetidos.</span>
+              </div>
+              <div v-else-if="shoppingItems.length" class="shopping-result-content">
+                <div class="shopping-result-toolbar">
+                  <span
+                    ><strong>{{ shoppingItems.length - shoppingChecked.size }}</strong> por
+                    comprar</span
+                  >
+                  <button type="button" class="secondary-button" @click="copyShoppingList">
+                    <PhNote :size="17" /> Copiar lista
+                  </button>
+                  <a
+                    class="secondary-button shopping-alexa-link"
+                    :href="shoppingAlexaUrl"
+                    @click.prevent="sendShoppingListToAlexa"
+                  >
+                    <PhSpeakerHigh :size="17" /> Enviar a Alexa
+                  </a>
+                </div>
+                <div class="shopping-groups">
+                  <section
+                    v-for="group in shoppingGroups"
+                    :key="group.category"
+                    class="shopping-group"
+                  >
+                    <h3>{{ group.category }}</h3>
+                    <label
+                      v-for="item in group.items"
+                      :key="`${item.name}-${item.index}`"
+                      class="shopping-item"
+                      :class="{ checked: shoppingItemChecked(item.index) }"
+                    >
+                      <input
+                        type="checkbox"
+                        :checked="shoppingItemChecked(item.index)"
+                        @change="toggleShoppingItem(item.index)"
+                      />
+                      <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
+                      <span class="shopping-item-copy"
+                        ><strong>{{ item.name }}</strong
+                        ><small v-if="item.quantity">{{ item.quantity }}</small></span
+                      >
+                    </label>
+                  </section>
+                </div>
+                <div class="shopping-result-actions">
+                  <button type="button" class="secondary-button" @click="previousShoppingStep">
+                    <PhArrowLeft :size="17" /> Revisar platos
+                  </button>
+                  <button type="button" class="shopping-regenerate" @click="generateShoppingList">
+                    <PhArrowsClockwise :size="17" /> Generar otra propuesta
+                  </button>
+                </div>
+              </div>
+              <div v-else class="shopping-result-empty">
+                <div class="shopping-result-empty-icon">
+                  <PhSparkle :size="29" weight="duotone" />
+                </div>
+                <h3>Tu lista aparecerá aquí</h3>
+                <p>Selecciona los días que quieras cubrir y pulsa «Generar lista».</p>
+                <button
+                  type="button"
+                  class="primary-button"
+                  :disabled="!shoppingMeals.length"
+                  @click="generateShoppingList"
+                >
+                  <PhSparkle :size="17" weight="fill" /> Generar con IA
+                </button>
+              </div>
+            </section>
+          </div>
+          <dialog
+            v-if="shoppingErrorModal"
+            open
+            class="modal-backdrop shopping-error-backdrop"
+            @click.self="closeShoppingError"
+          >
+            <div class="modal-card shopping-error-modal">
+              <div class="modal-header">
+                <div class="shopping-error-heading">
+                  <div class="shopping-error-icon"><PhWarningCircle :size="24" /></div>
+                  <div>
+                    <p class="eyebrow">AVISO</p>
+                    <h2>{{ shoppingErrorModal.title }}</h2>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="icon-button"
+                  aria-label="Cerrar error"
+                  @click="closeShoppingError"
+                >
+                  <PhX :size="22" />
+                </button>
+              </div>
+              <p class="shopping-error-message">{{ shoppingErrorModal.message }}</p>
+              <details v-if="shoppingErrorModal.details" class="shopping-error-details" open>
+                <summary>Ver detalle técnico</summary>
+                <pre>{{ shoppingErrorModal.details }}</pre>
+              </details>
+              <div class="modal-footer">
+                <button type="button" class="secondary-button" @click="closeShoppingError">
+                  Cerrar
+                </button>
+                <button
+                  v-if="shoppingErrorModal.retry"
+                  type="button"
+                  class="primary-button"
+                  @click="retryShoppingGeneration"
+                >
+                  <PhArrowsClockwise :size="17" /> Reintentar
+                </button>
+              </div>
+            </div>
+          </dialog>
         </section>
         <section v-else-if="isCalendar" class="calendar-page">
           <div class="page-heading calendar-heading">
@@ -2009,7 +2561,12 @@ onUnmounted(() => {
         </template>
       </template>
       <section v-else class="loading-card app-loading-card">
-        <img class="loading-logo" :src="publicAsset('icons/menu-diario-144.png')" alt="" aria-hidden="true" />
+        <img
+          class="loading-logo"
+          :src="publicAsset('icons/menu-diario-144.png')"
+          alt=""
+          aria-hidden="true"
+        />
         <div class="loading-copy">
           <strong>Menu Diario</strong>
           <span>Comprobando sesión…</span>
@@ -2084,9 +2641,6 @@ onUnmounted(() => {
                 </button>
               </div>
             </div>
-            <button v-else class="add-first-dish" @click="addDish(meal)">
-              Escribe un plato para empezar
-            </button>
             <details class="meal-more-options">
               <summary>Más opciones</summary>
               <div class="more-options-content">
@@ -2442,7 +2996,7 @@ onUnmounted(() => {
                 </button>
               </div>
             </div>
-            <div class="alert-form-row">
+            <div class="alert-form-row alert-form-settings">
               <label class="option-active"
                 ><input v-model="alertDraft.default_enabled" type="checkbox" /> Activo por
                 defecto</label
