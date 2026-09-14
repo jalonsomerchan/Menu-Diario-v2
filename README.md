@@ -1,6 +1,6 @@
-# menudiario_v2
+# Menu Diario
 
-This template should help get you started developing with Vue 3 in Vite.
+Aplicación Vue 3 + Vite para planificar las comidas.
 
 ## Recommended IDE Setup
 
@@ -46,3 +46,16 @@ npm run lint
 ## PWA
 
 La aplicación incluye manifest, iconos instalables, service worker para la shell offline y metadatos para iOS/Android. Para probar la instalación en local, genera una build y sirve `dist` con `npm run preview`; la instalación requiere HTTPS o `localhost`.
+
+## Despliegue en GitHub Pages
+
+El workflow de [GitHub Actions](.github/workflows/deploy.yml) publica automáticamente la carpeta `dist` en GitHub Pages cada vez que se actualiza `main`. La configuración detecta automáticamente el nombre del repositorio para usar la base `/Menu-Diario-v2/` y genera `404.html` para mantener funcionando las rutas de Vue Router.
+
+En el repositorio, configura estos secretos en `Settings → Secrets and variables → Actions` para activar el acceso con Google en producción:
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_APP_ID`
+
+Opcionalmente, crea la variable `VITE_API_BASE` si la API no es `https://alon.one/api`. En `Settings → Pages`, selecciona **GitHub Actions** como método de publicación.

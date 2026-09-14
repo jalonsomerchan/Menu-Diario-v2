@@ -3,21 +3,21 @@
   "short_name": "Menu Diario",
   "description": "Planifica tus comidas de forma sencilla.",
   "lang": "es",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "theme_color": "#1769e8",
   "background_color": "#f6f9fd",
   "icons": [
     {
-      "src": "/icons/menu-diario-192.png",
+      "src": "./icons/menu-diario-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/menu-diario-512.png",
+      "src": "./icons/menu-diario-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

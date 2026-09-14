@@ -230,6 +230,8 @@ const draftTitle = computed(() =>
 )
 const route = useRoute()
 const router = useRouter()
+const baseUrl = import.meta.env.BASE_URL
+const publicAsset = (path) => `${baseUrl}${path.replace(/^\/+/, '')}`
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
 const isCalendar = computed(() => route.name === 'calendar')
@@ -1522,16 +1524,16 @@ onUnmounted(() => {
     <header class="topbar">
       <a
         v-if="user"
-        href="/"
+        :href="baseUrl"
         class="brand-mark brand-link"
         aria-label="Ir al dashboard"
         @click.prevent="goToDashboard"
       >
-        <img class="brand-icon" src="/icons/menu-diario-96.png" alt="" aria-hidden="true" />
+        <img class="brand-icon" :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
         <div><strong>Menu Diario</strong><small>Comer bien, cada día</small></div>
       </a>
       <div v-else class="brand-mark">
-        <img class="brand-icon" src="/icons/menu-diario-96.png" alt="" aria-hidden="true" />
+        <img class="brand-icon" :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
         <div><strong>Menu Diario</strong><small>Comer bien, cada día</small></div>
       </div>
       <div v-if="user" class="navigation-menu">
@@ -1631,7 +1633,7 @@ onUnmounted(() => {
     </header>
 
     <aside v-if="installBannerVisible && !isStandalone" class="install-banner" aria-live="polite">
-      <img src="/icons/menu-diario-96.png" alt="" aria-hidden="true" />
+      <img :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
       <div>
         <strong>Instala Menu Diario</strong>
         <span>Ten tu planificador siempre a mano.</span>
@@ -1695,7 +1697,7 @@ onUnmounted(() => {
       </section>
       <section v-else-if="!user && authReady" class="welcome-card">
         <div class="welcome-icon">
-          <img src="/icons/menu-diario-144.png" alt="" aria-hidden="true" />
+          <img :src="publicAsset('icons/menu-diario-144.png')" alt="" aria-hidden="true" />
         </div>
         <p class="eyebrow">PLANIFICA SIN COMPLICARTE</p>
         <h1>Un menú claro para cada día.</h1>
@@ -2007,7 +2009,7 @@ onUnmounted(() => {
         </template>
       </template>
       <section v-else class="loading-card app-loading-card">
-        <img class="loading-logo" src="/icons/menu-diario-144.png" alt="" aria-hidden="true" />
+        <img class="loading-logo" :src="publicAsset('icons/menu-diario-144.png')" alt="" aria-hidden="true" />
         <div class="loading-copy">
           <strong>Menu Diario</strong>
           <span>Comprobando sesión…</span>
