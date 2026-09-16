@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS md_preferences (
   theme VARCHAR(16) NOT NULL DEFAULT 'system',
   default_reminder_enabled TINYINT(1) NOT NULL DEFAULT 0,
   default_reminder_time VARCHAR(5) NOT NULL DEFAULT '09:00',
+  breakfast_time VARCHAR(5) NULL DEFAULT NULL,
+  lunch_time VARCHAR(5) NULL DEFAULT NULL,
+  dinner_time VARCHAR(5) NULL DEFAULT NULL,
   notification_enabled TINYINT(1) NOT NULL DEFAULT 1,
   notification_types VARCHAR(255) NOT NULL DEFAULT '["meal_added","meal_updated","meal_moved","group","reminder"]',
   telegram_user_id VARCHAR(64) NULL,
@@ -170,6 +173,51 @@ CREATE TABLE IF NOT EXISTS md_dish_favorites (
   PRIMARY KEY (uid, dish_id),
   KEY idx_md_favorite_dish (dish_id),
   CONSTRAINT fk_md_favorite_dish FOREIGN KEY (dish_id) REFERENCES md_dishes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_dish_ingredients (
+  uid VARCHAR(128) NOT NULL,
+  dish_id BIGINT UNSIGNED NOT NULL,
+  ingredients_json TEXT NOT NULL,
+  migrated_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (uid, dish_id),
+  KEY idx_md_dish_ingredients_dish (dish_id),
+  CONSTRAINT fk_md_dish_ingredients_dish FOREIGN KEY (dish_id) REFERENCES md_dishes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_ingredients (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(190) NOT NULL,
+  normalized_name VARCHAR(190) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_md_ingredient_normalized_name (normalized_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_user_ingredients (
+  uid VARCHAR(128) NOT NULL,
+  ingredient_id BIGINT UNSIGNED NOT NULL,
+  exclude_from_shopping TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (uid, ingredient_id),
+  KEY idx_md_user_ingredients_ingredient (ingredient_id),
+  CONSTRAINT fk_md_user_ingredients_ingredient FOREIGN KEY (ingredient_id) REFERENCES md_ingredients(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_dish_ingredient_links (
+  uid VARCHAR(128) NOT NULL,
+  dish_id BIGINT UNSIGNED NOT NULL,
+  ingredient_id BIGINT UNSIGNED NOT NULL,
+  display_order INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (uid, dish_id, ingredient_id),
+  KEY idx_md_dish_ingredient_links_dish (uid, dish_id, display_order),
+  KEY idx_md_dish_ingredient_links_ingredient (ingredient_id),
+  CONSTRAINT fk_md_dish_ingredient_links_dish FOREIGN KEY (dish_id) REFERENCES md_dishes(id) ON DELETE CASCADE,
+  CONSTRAINT fk_md_dish_ingredient_links_ingredient FOREIGN KEY (ingredient_id) REFERENCES md_ingredients(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS md_week_menus (

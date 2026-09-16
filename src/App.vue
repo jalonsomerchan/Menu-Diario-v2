@@ -53,6 +53,7 @@ import {
 } from '@phosphor-icons/vue'
 import { ApiError, getJson, postJson, uploadFile } from './lib/api'
 import { formatDay, fromIsoDate, mondayOf, shiftDate, toIsoDate } from './lib/dates'
+import { buildMealCalendar } from './lib/ical'
 import {
   getFirebaseAuth,
   hasFirebaseConfig,
@@ -127,6 +128,9 @@ const error = ref('')
 const notice = ref('')
 const preferences = reactive({
   enabled_meals: ['lunch'],
+  breakfast_time: '',
+  lunch_time: '',
+  dinner_time: '',
   theme: 'system',
   default_reminder_enabled: false,
   default_reminder_time: '09:00',
@@ -134,6 +138,8 @@ const preferences = reactive({
   notification_types: notificationTypes.map((type) => type.id),
 })
 const dishes = ref([])
+const ingredientCatalog = ref([])
+const ingredientList = ref([])
 const tuppers = ref([])
 const tupperSearch = ref('')
 const tupperFilter = ref('all')
@@ -195,24 +201,28 @@ const userToken = ref('')
 const dishSearch = ref('')
 const favoritesOnly = ref(false)
 const dishDraft = ref('')
+const dishIngredientsEditorOpen = ref(false)
+const dishIngredientsDish = ref(null)
+const dishIngredientsDraft = ref([])
+const dishIngredientsSaving = ref(false)
+const dishIngredientsGenerating = ref(false)
+const ingredientSearch = ref('')
+const ingredientDraft = ref('')
+const ingredientSaving = ref(false)
+const ingredientDeleting = ref('')
 const calendarMonth = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
 const calendarDays = ref(new Map())
-const calendarLoading = ref(false)
+const calendarLoading = ref(true)
 const calendarDetailOpen = ref(false)
 const calendarSelectedDay = ref(null)
-const shoppingSelectedDays = ref(new Set())
+const shoppingSelectedDishes = ref(new Set())
 const shoppingSelectionInitialized = ref(false)
 const shoppingItems = ref([])
 const shoppingGenerating = ref(false)
 const shoppingChecked = ref(new Set())
 const shoppingErrorDetails = ref('')
 const shoppingErrorModal = ref(null)
-const shoppingStep = ref(1)
-const shoppingSteps = [
-  { id: 1, label: 'Días' },
-  { id: 2, label: 'Platos' },
-  { id: 3, label: 'Lista' },
-]
+const calendarExporting = ref(false)
 const shoppingAlexaUrl = 'alexa://index.html#lists/shopping'
 const rouletteOpen = ref(false)
 const rouletteSpinning = ref(false)
@@ -262,6 +272,7 @@ const baseUrl = import.meta.env.BASE_URL
 const publicAsset = (path) => `${baseUrl}${path.replace(/^\/+/, '')}`
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
+const isIngredients = computed(() => route.name === 'ingredients')
 const isTuppers = computed(() => route.name === 'tuppers')
 const isShopping = computed(() => route.name === 'shopping')
 const isCalendar = computed(() => route.name === 'calendar')
@@ -284,6 +295,12 @@ const sortedDishes = computed(() => {
         Number(b.times_used || 0) - Number(a.times_used || 0) ||
         a.name.localeCompare(b.name, 'es'),
     )
+})
+const filteredIngredients = computed(() => {
+  const query = ingredientSearch.value.trim().toLocaleLowerCase('es')
+  return ingredientList.value.filter((ingredient) =>
+    !query || ingredient.name.toLocaleLowerCase('es').includes(query),
+  )
 })
 const tupperStats = computed(() => ({
   containers: tuppers.value.length,
@@ -344,9 +361,8 @@ const calendarWeeks = computed(() =>
   ),
 )
 const shoppingDayEntries = computed(() => dayEntries.value.slice(0, 7))
-const shoppingMeals = computed(() =>
+const shoppingAvailableDishes = computed(() =>
   shoppingDayEntries.value.flatMap((entry) => {
-    if (!shoppingSelectedDays.value.has(entry.isoDate)) return []
     const day = currentDay(entry.isoDate, entry.weekStart)
     if (day.skipped) return []
     return enabledMeals.value.flatMap((meal) => {
@@ -354,10 +370,33 @@ const shoppingMeals = computed(() =>
       const dishes = mealState.items.filter((item) => String(item).trim())
       return mealState.skipped || !dishes.length
         ? []
-        : [{ dayDate: entry.isoDate, date: entry.date, meal, dishes }]
+        : dishes.map((dish, dishIndex) => ({
+            dayDate: entry.isoDate,
+            date: entry.date,
+            meal,
+            dish,
+            key: `${entry.isoDate}-${meal}-${dishIndex}`,
+          }))
     })
   }),
 )
+const shoppingMeals = computed(() => {
+  const grouped = new Map()
+  shoppingAvailableDishes.value.forEach((dish) => {
+    if (!shoppingSelectedDishes.value.has(dish.key)) return
+    const groupKey = `${dish.dayDate}-${dish.meal}`
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        dayDate: dish.dayDate,
+        date: dish.date,
+        meal: dish.meal,
+        dishes: [],
+      })
+    }
+    grouped.get(groupKey).dishes.push(dish.dish)
+  })
+  return [...grouped.values()]
+})
 const shoppingToBuyItems = computed(() =>
   shoppingItems.value.filter((_, index) => !shoppingChecked.value.has(index)),
 )
@@ -614,6 +653,9 @@ function applyContext(data) {
   globalAlerts.value = data.global_alerts || globalAlerts.value
   preferences.enabled_meals = data.group?.enabled_meals ||
     data.preferences?.enabled_meals || ['lunch']
+  preferences.breakfast_time = data.preferences?.breakfast_time || ''
+  preferences.lunch_time = data.preferences?.lunch_time || ''
+  preferences.dinner_time = data.preferences?.dinner_time || ''
   preferences.theme = data.preferences?.theme || 'system'
   preferences.default_reminder_enabled = Boolean(data.preferences?.default_reminder_enabled)
   preferences.default_reminder_time = data.preferences?.default_reminder_time || '09:00'
@@ -625,6 +667,8 @@ function applyContext(data) {
   notifications.value = data.notifications || notifications.value
   notificationUnreadCount.value = Number(data.notification_unread_count || 0)
   dishes.value = data.dishes || dishes.value
+  ingredientCatalog.value = data.ingredients || ingredientCatalog.value
+  ingredientList.value = data.ingredient_list || ingredientList.value
 }
 
 async function fetchRange(from, to, includeContext = true) {
@@ -661,8 +705,8 @@ async function loadDashboardRange() {
 }
 
 function initializeShoppingSelection() {
-  if (shoppingSelectionInitialized.value || !shoppingDayEntries.value.length) return
-  shoppingSelectedDays.value = new Set(shoppingDayEntries.value.map((entry) => entry.isoDate))
+  if (shoppingSelectionInitialized.value || !shoppingAvailableDishes.value.length) return
+  shoppingSelectedDishes.value = new Set(shoppingAvailableDishes.value.map((dish) => dish.key))
   shoppingSelectionInitialized.value = true
 }
 
@@ -689,11 +733,11 @@ async function loadShoppingRange() {
   initializeShoppingSelection()
 }
 
-function toggleShoppingDay(dayDate) {
-  const selected = new Set(shoppingSelectedDays.value)
-  if (selected.has(dayDate)) selected.delete(dayDate)
-  else selected.add(dayDate)
-  shoppingSelectedDays.value = selected
+function toggleShoppingDish(dishKey) {
+  const selected = new Set(shoppingSelectedDishes.value)
+  if (selected.has(dishKey)) selected.delete(dishKey)
+  else selected.add(dishKey)
+  shoppingSelectedDishes.value = selected
   shoppingItems.value = []
 }
 
@@ -741,34 +785,6 @@ function closeErrorModal() {
 function retryShoppingGeneration() {
   closeShoppingError()
   void generateShoppingList()
-}
-
-function canEnterShoppingStep(step) {
-  if (step === 1) return true
-  if (step === 2) return shoppingSelectedDays.value.size > 0
-  return shoppingMeals.value.length > 0 && shoppingItems.value.length > 0
-}
-
-function selectShoppingStep(step) {
-  if (step > shoppingStep.value && !canEnterShoppingStep(step)) return
-  shoppingStep.value = step
-}
-
-function nextShoppingStep() {
-  if (shoppingStep.value === 1) {
-    if (!shoppingSelectedDays.value.size) return
-    shoppingStep.value = 2
-    return
-  }
-  if (shoppingStep.value === 2) {
-    if (!shoppingMeals.value.length) return
-    shoppingStep.value = 3
-    void generateShoppingList()
-  }
-}
-
-function previousShoppingStep() {
-  if (shoppingStep.value > 1) shoppingStep.value -= 1
 }
 
 function shoppingAlexaCommand() {
@@ -822,6 +838,9 @@ async function generateShoppingList() {
     shoppingItems.value = (data.items || [])
       .map((item) => (typeof item === 'string' ? item : item?.name || ''))
       .filter(Boolean)
+    if (Array.isArray(data.dishes)) dishes.value = data.dishes
+    if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
+    if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
     shoppingChecked.value = new Set()
     shoppingErrorDetails.value = ''
     notice.value = 'Lista generada. Revísala antes de ir a comprar.'
@@ -970,6 +989,131 @@ async function saveDish() {
     error.value = reason instanceof Error ? reason.message : 'No se pudo añadir el plato.'
   } finally {
     saving.value = false
+  }
+}
+async function saveIngredient() {
+  const name = ingredientDraft.value.trim()
+  if (!name || ingredientSaving.value) return
+  ingredientSaving.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/save_ingredient', userToken.value, { name })
+    ingredientCatalog.value = data.ingredients || ingredientCatalog.value
+    ingredientList.value = data.ingredient_list || ingredientList.value
+    ingredientDraft.value = ''
+    notice.value = 'Ingrediente añadido al catálogo.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo añadir el ingrediente.'
+  } finally {
+    ingredientSaving.value = false
+  }
+}
+async function toggleIngredientShopping(ingredient) {
+  if (!ingredient?.id || ingredientDeleting.value) return
+  const previous = Boolean(ingredient.exclude_from_shopping)
+  ingredient.exclude_from_shopping = !previous
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/set_ingredient_shopping', userToken.value, {
+      id: ingredient.id,
+      exclude_from_shopping: ingredient.exclude_from_shopping,
+    })
+    ingredientCatalog.value = data.ingredients || ingredientCatalog.value
+    ingredientList.value = data.ingredient_list || ingredientList.value
+    notice.value = ingredient.exclude_from_shopping
+      ? `«${ingredient.name}» no se añadirá a la lista.`
+      : `«${ingredient.name}» volverá a añadirse a la lista.`
+  } catch (reason) {
+    ingredient.exclude_from_shopping = previous
+    error.value = reason instanceof Error ? reason.message : 'No se pudo actualizar el ingrediente.'
+  }
+}
+async function deleteIngredient(ingredient) {
+  if (!ingredient?.id || ingredientDeleting.value) return
+  const usedMessage = ingredient.dish_count
+    ? ` También se quitará de ${ingredient.dish_count} ${ingredient.dish_count === 1 ? 'plato' : 'platos'}.`
+    : ''
+  if (!window.confirm(`¿Quieres quitar «${ingredient.name}» de tu catálogo?${usedMessage}`)) return
+  ingredientDeleting.value = String(ingredient.id)
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/delete_ingredient', userToken.value, { id: ingredient.id })
+    ingredientCatalog.value = data.ingredients || ingredientCatalog.value
+    ingredientList.value = data.ingredient_list || ingredientList.value
+    dishes.value = dishes.value.map((dish) => ({
+      ...dish,
+      ingredients: (dish.ingredients || []).filter(
+        (item) => item.toLocaleLowerCase('es') !== ingredient.name.toLocaleLowerCase('es'),
+      ),
+    }))
+    notice.value = 'Ingrediente quitado del catálogo.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo quitar el ingrediente.'
+  } finally {
+    ingredientDeleting.value = ''
+  }
+}
+function openDishIngredients(dish) {
+  dishIngredientsDish.value = dish
+  dishIngredientsDraft.value = dish.ingredients?.length ? [...dish.ingredients] : ['']
+  dishIngredientsEditorOpen.value = true
+}
+function closeDishIngredients() {
+  dishIngredientsEditorOpen.value = false
+  dishIngredientsDish.value = null
+  dishIngredientsDraft.value = []
+}
+function addDishIngredient() {
+  dishIngredientsDraft.value.push('')
+}
+function removeDishIngredient(index) {
+  dishIngredientsDraft.value.splice(index, 1)
+  if (!dishIngredientsDraft.value.length) dishIngredientsDraft.value.push('')
+}
+async function saveDishIngredients() {
+  if (!dishIngredientsDish.value) return
+  dishIngredientsSaving.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const ingredients = dishIngredientsDraft.value.map((item) => item.trim()).filter(Boolean)
+    const data = await postJson('menudiario/save_dish_ingredients', userToken.value, {
+      dish_id: dishIngredientsDish.value.id,
+      ingredients,
+    })
+    updateDishInCatalog(data.dish)
+    if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
+    if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
+    notice.value = ingredients.length ? 'Ingredientes guardados.' : 'Ingredientes eliminados.'
+    closeDishIngredients()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron guardar los ingredientes.'
+  } finally {
+    dishIngredientsSaving.value = false
+  }
+}
+async function generateDishIngredients() {
+  if (!dishIngredientsDish.value || dishIngredientsGenerating.value) return
+  dishIngredientsGenerating.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/generate_dish_ingredients', userToken.value, {
+      dish_id: dishIngredientsDish.value.id,
+    })
+    updateDishInCatalog(data.dish)
+    if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
+    if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
+    dishIngredientsDish.value = data.dish
+    dishIngredientsDraft.value = data.dish?.ingredients?.length ? [...data.dish.ingredients] : ['']
+    notice.value = 'La IA ha generado y guardado los ingredientes. Puedes revisarlos y ajustarlos.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron generar los ingredientes.'
+  } finally {
+    dishIngredientsGenerating.value = false
   }
 }
 function updateDishInCatalog(updatedDish) {
@@ -1185,13 +1329,12 @@ async function logout() {
   notificationUnreadCount.value = 0
   notificationsOpen.value = false
   menuOpen.value = false
-  shoppingSelectedDays.value = new Set()
+  shoppingSelectedDishes.value = new Set()
   shoppingSelectionInitialized.value = false
   shoppingItems.value = []
   shoppingChecked.value = new Set()
   shoppingErrorDetails.value = ''
   shoppingErrorModal.value = null
-  shoppingStep.value = 1
   photoUploadingDish.value = ''
   photoDeletingDish.value = ''
   tuppers.value = []
@@ -1218,6 +1361,9 @@ async function savePreferences() {
         : 'menudiario/preferences'
     const data = await postJson(path, userToken.value, {
       enabled_meals: preferences.enabled_meals,
+      breakfast_time: preferences.breakfast_time || null,
+      lunch_time: preferences.lunch_time || null,
+      dinner_time: preferences.dinner_time || null,
       default_reminder_enabled: preferences.default_reminder_enabled,
       default_reminder_time: preferences.default_reminder_time,
       notification_enabled: preferences.notification_enabled,
@@ -1226,6 +1372,9 @@ async function savePreferences() {
     if (data.group) group.value = data.group
     preferences.enabled_meals =
       data.group?.enabled_meals || data.preferences?.enabled_meals || preferences.enabled_meals
+    preferences.breakfast_time = data.preferences?.breakfast_time || ''
+    preferences.lunch_time = data.preferences?.lunch_time || ''
+    preferences.dinner_time = data.preferences?.dinner_time || ''
     preferences.default_reminder_enabled = Boolean(
       data.preferences?.default_reminder_enabled ?? preferences.default_reminder_enabled,
     )
@@ -1243,6 +1392,40 @@ async function savePreferences() {
     error.value = reason instanceof Error ? reason.message : 'No se pudieron guardar los ajustes.'
   } finally {
     saving.value = false
+  }
+}
+
+async function exportMealCalendar() {
+  if (calendarExporting.value || !user.value) return
+  calendarExporting.value = true
+  error.value = ''
+  try {
+    const rangeStart = toIsoDate(new Date())
+    const rangeEnd = shiftDate(rangeStart, 365)
+    const data = await fetchRange(rangeStart, rangeEnd, false)
+    const calendar = buildMealCalendar({
+      uid: user.value.uid,
+      days: data.days,
+      times: {
+        breakfast: preferences.breakfast_time,
+        lunch: preferences.lunch_time,
+        dinner: preferences.dinner_time,
+      },
+    })
+    const blob = new Blob([calendar], { type: 'text/calendar;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'menu-diario.ics'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    notice.value = 'Calendario descargado. Incluye los próximos 12 meses.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo generar el calendario.'
+  } finally {
+    calendarExporting.value = false
   }
 }
 function stopTelegramPolling() {
@@ -1997,6 +2180,10 @@ function goToDishes() {
   menuOpen.value = false
   router.push({ name: 'dishes' })
 }
+function goToIngredients() {
+  menuOpen.value = false
+  router.push({ name: 'ingredients' })
+}
 function goToTuppers() {
   menuOpen.value = false
   router.push({ name: 'tuppers' })
@@ -2106,6 +2293,30 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell">
+    <div
+      v-if="!authReady && !isShared"
+      class="app-loading-screen"
+      role="status"
+      aria-live="polite"
+      aria-label="Cargando Menu Diario"
+    >
+      <div class="app-loading-content">
+        <div class="app-loading-logo-wrap">
+          <img
+            class="loading-logo"
+            :src="publicAsset('icons/menu-diario-144.png')"
+            alt=""
+            aria-hidden="true"
+          />
+          <span class="app-loading-pulse" aria-hidden="true"></span>
+        </div>
+        <div class="loading-copy">
+          <strong>Menu Diario</strong>
+          <span>Preparando tu planificador…</span>
+        </div>
+        <div class="loading-progress" aria-hidden="true"><span></span></div>
+      </div>
+    </div>
     <header class="topbar">
       <a
         v-if="user"
@@ -2150,6 +2361,8 @@ onUnmounted(() => {
             <PhHouse :size="19" weight="regular" /><span>Planificador</span></button
           ><button type="button" :class="{ active: isDishes }" @click="goToDishes">
             <PhForkKnife :size="19" weight="regular" /><span>Mis platos</span></button
+          ><button type="button" :class="{ active: isIngredients }" @click="goToIngredients">
+            <PhLeaf :size="19" weight="regular" /><span>Ingredientes</span></button
           ><button type="button" :class="{ active: isTuppers }" @click="goToTuppers">
             <PhCookingPot :size="19" weight="regular" /><span>Mis tuppers</span></button
           ><button type="button" :class="{ active: isShopping }" @click="goToShopping">
@@ -2362,7 +2575,17 @@ onUnmounted(() => {
               <PhHeart :size="18" :weight="favoritesOnly ? 'fill' : 'regular'" /> Solo favoritos
             </button>
           </div>
-          <div v-if="!sortedDishes.length" class="empty-state">
+          <section v-if="loading" class="dish-catalog-grid catalog-skeleton-grid" aria-busy="true" aria-label="Cargando mis platos">
+            <article v-for="dish in 6" :key="dish" class="dish-library-card skeleton-dish-card">
+              <span class="skeleton-dish-photo"></span>
+              <div class="dish-library-copy">
+                <span class="skeleton-line skeleton-dish-title"></span>
+                <span class="skeleton-line skeleton-dish-meta"></span>
+              </div>
+              <span class="skeleton-dish-heart"></span>
+            </article>
+          </section>
+          <div v-else-if="!sortedDishes.length" class="empty-state">
             <PhForkKnife :size="34" weight="regular" />
             <h2>{{ favoritesOnly ? 'Aún no tienes favoritos' : 'Tu lista está vacía' }}</h2>
             <p>
@@ -2390,14 +2613,24 @@ onUnmounted(() => {
               </div>
               <div class="dish-library-copy">
                 <strong>{{ dish.name }}</strong
-                ><small
+                  ><small
                   >{{
                     dish.times_used
                       ? `Usado ${dish.times_used} ${dish.times_used === 1 ? 'vez' : 'veces'}`
                       : 'Todavía no usado'
                   }}<span v-if="dish.source === 'admin'"> · Sugerencia inicial</span></small
+                ><small class="dish-ingredients-status"
+                  >{{ dish.ingredients?.length || 0 }}
+                  {{ dish.ingredients?.length === 1 ? 'ingrediente' : 'ingredientes' }}</small
                 >
               </div>
+              <button
+                type="button"
+                class="photo-action-button dish-ingredients-button"
+                @click="openDishIngredients(dish)"
+              >
+                <PhList :size="16" weight="regular" /> Ingredientes
+              </button>
               <div v-if="dish.source !== 'admin'" class="dish-photo-actions">
                 <label class="photo-action-button dish-photo-action">
                   <PhCamera :size="16" weight="regular" />
@@ -2439,6 +2672,92 @@ onUnmounted(() => {
                 @click="toggleDishFavorite(dish)"
               >
                 <PhHeart :size="22" :weight="dish.is_favorite ? 'fill' : 'regular'" />
+              </button>
+            </article>
+          </section>
+        </section>
+        <section v-else-if="isIngredients" class="ingredients-page">
+          <div class="page-heading ingredients-heading">
+            <div>
+              <p class="eyebrow">CATÁLOGO DE COMPRA</p>
+              <h1>Ingredientes</h1>
+              <p class="muted">
+                Gestiona tus ingredientes una sola vez y reutilízalos en todos tus platos.
+              </p>
+            </div>
+          </div>
+          <form class="ingredient-create-form" @submit.prevent="saveIngredient">
+            <PhPlus :size="20" weight="regular" aria-hidden="true" />
+            <input
+              v-model="ingredientDraft"
+              type="text"
+              maxlength="190"
+              placeholder="Ej.: aceite de oliva"
+              aria-label="Nombre del nuevo ingrediente"
+            />
+            <button class="primary-button" :disabled="ingredientSaving || !ingredientDraft.trim()">
+              {{ ingredientSaving ? 'Guardando…' : 'Añadir ingrediente' }}
+            </button>
+          </form>
+          <div class="ingredients-toolbar">
+            <label class="search-field"
+              ><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input
+                v-model="ingredientSearch"
+                type="search"
+                placeholder="Buscar ingredientes"
+                aria-label="Buscar ingredientes" /></label
+            ><span class="ingredients-count"
+              >{{ ingredientList.length }}
+              {{ ingredientList.length === 1 ? 'ingrediente' : 'ingredientes' }}</span>
+          </div>
+          <div v-if="!filteredIngredients.length" class="empty-state ingredients-empty-state">
+            <PhLeaf :size="34" weight="regular" />
+            <h2>{{ ingredientList.length ? 'No hay coincidencias' : 'Tu catálogo está vacío' }}</h2>
+            <p>
+              {{
+                ingredientList.length
+                  ? 'Prueba con otro nombre.'
+                  : 'Añade ingredientes para reutilizarlos al editar tus platos.'
+              }}
+            </p>
+          </div>
+          <section v-else class="ingredients-grid" aria-label="Listado de ingredientes">
+            <article v-for="ingredient in filteredIngredients" :key="ingredient.id" class="ingredient-catalog-card">
+              <div class="ingredient-catalog-icon"><PhLeaf :size="21" weight="regular" /></div>
+              <div class="ingredient-catalog-copy">
+                <strong>{{ ingredient.name }}</strong>
+                <small>
+                  {{ ingredient.dish_count }}
+                  {{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}
+                </small>
+              </div>
+              <label
+                class="ingredient-shopping-toggle"
+                :class="{ active: ingredient.exclude_from_shopping }"
+                :title="
+                  ingredient.exclude_from_shopping
+                    ? 'Volver a añadir a la lista de la compra'
+                    : 'No añadir a la lista de la compra'
+                "
+                @click.stop
+              >
+                <input
+                  type="checkbox"
+                  :checked="ingredient.exclude_from_shopping"
+                  @change="toggleIngredientShopping(ingredient)"
+                />
+                <PhShoppingCart :size="16" />
+                <span>No añadir</span>
+              </label>
+              <button
+                type="button"
+                class="ingredient-delete-button"
+                :disabled="ingredientDeleting === String(ingredient.id)"
+                :aria-label="`Quitar ${ingredient.name}`"
+                title="Quitar del catálogo"
+                @click="deleteIngredient(ingredient)"
+              >
+                <PhTrash :size="18" weight="regular" />
               </button>
             </article>
           </section>
@@ -2608,146 +2927,76 @@ onUnmounted(() => {
               </p>
             </div>
           </div>
-          <nav class="shopping-wizard-progress" aria-label="Progreso de la lista de la compra">
-            <button
-              v-for="step in shoppingSteps"
-              :key="step.id"
-              type="button"
-              class="shopping-wizard-step"
-              :class="{ active: shoppingStep === step.id, completed: shoppingStep > step.id }"
-              :disabled="step.id > shoppingStep && !canEnterShoppingStep(step.id)"
-              :aria-current="shoppingStep === step.id ? 'step' : undefined"
-              @click="selectShoppingStep(step.id)"
-            >
-              <span>{{ step.id }}</span
-              ><strong>{{ step.label }}</strong>
-            </button>
-          </nav>
           <div class="shopping-layout">
-            <section
-              v-if="shoppingStep === 1"
-              class="shopping-builder"
-              aria-labelledby="shopping-builder-title"
-            >
+            <section class="shopping-builder shopping-selection-panel" aria-labelledby="shopping-builder-title">
               <div class="shopping-section-heading">
                 <div class="shopping-section-icon">
                   <PhCalendarCheck :size="22" weight="regular" />
                 </div>
                 <div>
-                  <p class="eyebrow">PASO 1</p>
-                  <h2 id="shopping-builder-title">Elige los días</h2>
+                  <p class="eyebrow">PRÓXIMOS PLATOS</p>
+                  <h2 id="shopping-builder-title">¿Qué vas a cocinar?</h2>
                   <p class="muted">
-                    Partimos de tus próximos siete días. Puedes quitar los que no quieras cubrir.
+                    Todos tus próximos platos están seleccionados. Desmarca los que no vayas a cocinar.
                   </p>
                 </div>
               </div>
-              <div v-if="loading" class="shopping-loading">
-                <div class="spinner"></div>
-                Cargando tus próximos días…
+              <div v-if="loading" class="shopping-skeleton-list" aria-hidden="true">
+                <div v-for="day in 7" :key="day" class="shopping-day-option skeleton-shopping-day">
+                  <span class="skeleton-square"></span>
+                  <span class="skeleton-line skeleton-shopping-title"></span>
+                  <span class="skeleton-line skeleton-shopping-meta"></span>
+                </div>
               </div>
-              <div v-else-if="!shoppingDayEntries.length" class="shopping-empty">
+              <div v-else-if="!shoppingAvailableDishes.length" class="shopping-empty">
                 <PhCalendarBlank :size="30" weight="regular" />
-                <strong>Aún no hay días disponibles</strong>
-                <span>Vuelve a intentarlo cuando tu menú esté cargado.</span>
+                <strong>Aún no hay platos próximos</strong>
+                <span>Añade platos a tu planificador para preparar una lista.</span>
               </div>
-              <div v-else class="shopping-day-picker">
+              <div v-else class="shopping-meal-selection">
                 <button
-                  v-for="entry in shoppingDayEntries"
-                  :key="entry.isoDate"
+                  v-for="dish in shoppingAvailableDishes"
+                  :key="dish.key"
                   type="button"
-                  class="shopping-day-option"
-                  :class="{ selected: shoppingSelectedDays.has(entry.isoDate) }"
-                  :aria-pressed="shoppingSelectedDays.has(entry.isoDate)"
-                  @click="toggleShoppingDay(entry.isoDate)"
+                  class="shopping-meal-option"
+                  :class="{ selected: shoppingSelectedDishes.has(dish.key) }"
+                  :aria-pressed="shoppingSelectedDishes.has(dish.key)"
+                  @click="toggleShoppingDish(dish.key)"
                 >
-                  <span class="shopping-day-check"><PhCheck :size="15" weight="bold" /></span>
-                  <strong>{{ formatDay(entry.date) }}</strong>
-                  <small
-                    >{{
-                      shoppingMeals.filter((meal) => meal.dayDate === entry.isoDate).length
-                    }}
-                    comidas con plato</small
-                  >
+                  <span class="shopping-meal-check"><PhCheck :size="15" weight="bold" /></span>
+                  <span class="meal-icon"><component :is="mealIcons[dish.meal]" :size="19" /></span>
+                  <span class="shopping-meal-option-copy">
+                    <small>{{ formatDay(dish.date) }} · {{ mealLabels[dish.meal] }}</small>
+                    <strong>{{ dish.dish }}</strong>
+                  </span>
                 </button>
               </div>
               <div class="shopping-selection-footer">
                 <span
-                  ><PhForkKnife :size="18" /> {{ shoppingMeals.length }}
-                  {{
-                    shoppingMeals.length === 1 ? 'comida seleccionada' : 'comidas seleccionadas'
-                  }}</span
+                  ><PhForkKnife :size="18" /> {{ shoppingSelectedDishes.size }} de
+                  {{ shoppingAvailableDishes.length }} platos seleccionados</span
                 >
-                <span class="shopping-selection-note"
-                  >La IA usará solo los platos configurados.</span
-                >
+                <span class="shopping-selection-note">Puedes cambiar esta selección cuando quieras.</span>
               </div>
               <div class="shopping-wizard-actions">
-                <span>Paso 1 de 3</span>
-                <button
-                  type="button"
-                  class="primary-button"
-                  :disabled="!shoppingSelectedDays.size"
-                  @click="nextShoppingStep"
-                >
-                  Revisar platos <PhArrowRight :size="17" />
-                </button>
-              </div>
-            </section>
-
-            <section
-              v-else-if="shoppingStep === 2"
-              class="shopping-builder shopping-review-step"
-              aria-labelledby="shopping-review-title"
-            >
-              <div class="shopping-section-heading">
-                <div class="shopping-section-icon"><PhForkKnife :size="22" weight="regular" /></div>
-                <div>
-                  <p class="eyebrow">PASO 2</p>
-                  <h2 id="shopping-review-title">Revisa tus platos</h2>
-                  <p class="muted">
-                    Estas son las comidas que enviaré a la IA para preparar tu lista.
-                  </p>
-                </div>
-              </div>
-              <div
-                v-if="shoppingMeals.length"
-                class="shopping-meal-preview shopping-meal-preview-large"
-              >
-                <article
-                  v-for="meal in shoppingMeals"
-                  :key="`${meal.dayDate}-${meal.meal}`"
-                  class="shopping-meal-preview-row"
-                >
-                  <span class="meal-icon"><component :is="mealIcons[meal.meal]" :size="18" /></span>
-                  <div>
-                    <small>{{ formatDay(meal.date) }} · {{ mealLabels[meal.meal] }}</small>
-                    <strong>{{ meal.dishes.join(' · ') }}</strong>
-                  </div>
-                </article>
-              </div>
-              <div v-else class="shopping-no-meals">No hay platos en los días seleccionados.</div>
-              <div class="shopping-wizard-actions">
-                <button type="button" class="secondary-button" @click="previousShoppingStep">
-                  <PhArrowLeft :size="17" /> Atrás
-                </button>
+                <span>La lista se generará con los platos marcados</span>
                 <button
                   type="button"
                   class="primary-button"
                   :disabled="!shoppingMeals.length || shoppingGenerating"
-                  @click="nextShoppingStep"
+                  @click="generateShoppingList"
                 >
                   Generar lista <PhSparkle :size="17" weight="fill" />
                 </button>
               </div>
             </section>
-
-            <section v-else class="shopping-result" aria-labelledby="shopping-result-title">
+            <section class="shopping-result" aria-labelledby="shopping-result-title">
               <div class="shopping-section-heading">
                 <div class="shopping-section-icon result-icon">
                   <PhShoppingCart :size="22" weight="regular" />
                 </div>
                 <div>
-                  <p class="eyebrow">PASO 3</p>
+                  <p class="eyebrow">RESULTADO</p>
                   <h2 id="shopping-result-title">Tu lista</h2>
                   <p class="muted">
                     Revisa la propuesta, marca lo que ya tengas y envíala a Alexa.
@@ -2800,9 +3049,6 @@ onUnmounted(() => {
                   </label>
                 </div>
                 <div class="shopping-result-actions">
-                  <button type="button" class="secondary-button" @click="previousShoppingStep">
-                    <PhArrowLeft :size="17" /> Revisar platos
-                  </button>
                   <button type="button" class="shopping-regenerate" @click="generateShoppingList">
                     <PhArrowsClockwise :size="17" /> Generar otra propuesta
                   </button>
@@ -2813,15 +3059,7 @@ onUnmounted(() => {
                   <PhSparkle :size="29" weight="duotone" />
                 </div>
                 <h3>Tu lista aparecerá aquí</h3>
-                <p>Selecciona los días que quieras cubrir y pulsa «Generar lista».</p>
-                <button
-                  type="button"
-                  class="primary-button"
-                  :disabled="!shoppingMeals.length"
-                  @click="generateShoppingList"
-                >
-                  <PhSparkle :size="17" weight="fill" /> Generar con IA
-                </button>
+                <p>Selecciona los platos que vas a cocinar y pulsa «Generar lista».</p>
               </div>
             </section>
           </div>
@@ -2899,9 +3137,13 @@ onUnmounted(() => {
                 weekday
               }}</span>
             </div>
-            <div v-if="calendarLoading" class="calendar-loading">
-              <div class="spinner"></div>
-              Cargando mes…
+            <div v-if="calendarLoading" class="calendar-skeleton-grid" aria-hidden="true">
+              <div v-for="week in 5" :key="week" class="calendar-skeleton-week">
+                <div v-for="day in 7" :key="day" class="calendar-skeleton-cell">
+                  <span class="skeleton-circle"></span>
+                  <span class="skeleton-line skeleton-calendar-dot"></span>
+                </div>
+              </div>
             </div>
             <div v-else class="calendar-grid">
               <div v-for="week in calendarWeeks" :key="week[0].isoDate" class="calendar-week">
@@ -2937,9 +3179,32 @@ onUnmounted(() => {
           </div>
         </section>
         <template v-else-if="isDashboard">
-          <section v-if="loading" class="loading-card">
-            <div class="spinner"></div>
-            Cargando tu menú…
+          <section
+            v-if="loading"
+            class="week-grid dashboard-skeleton-grid"
+            aria-busy="true"
+            aria-label="Cargando tu menú"
+          >
+            <article v-for="day in 7" :key="day" class="day-card skeleton-day-card">
+              <header class="day-header">
+                <div class="day-heading-copy">
+                  <span class="skeleton-line skeleton-day-name"></span>
+                  <span class="skeleton-line skeleton-day-date"></span>
+                </div>
+                <span class="skeleton-pill"></span>
+              </header>
+              <div class="meal-list">
+                <div v-for="meal in allMeals" :key="meal" class="meal-card skeleton-meal-card">
+                  <span class="skeleton-circle"></span>
+                  <div class="meal-content">
+                    <span class="skeleton-line skeleton-meal-label"></span>
+                    <span class="skeleton-line skeleton-meal-title"></span>
+                    <span class="skeleton-line skeleton-meal-meta"></span>
+                  </div>
+                </div>
+              </div>
+              <span class="skeleton-edit"></span>
+            </article>
           </section>
           <section v-else class="week-grid">
             <article
@@ -3088,6 +3353,84 @@ onUnmounted(() => {
         <div class="spinner" aria-hidden="true"></div>
       </section>
     </main>
+
+    <dialog
+      v-if="dishIngredientsEditorOpen"
+      open
+      class="modal-backdrop"
+      @click.self="closeDishIngredients"
+    >
+      <form class="modal-card dish-ingredients-editor-card" @submit.prevent="saveDishIngredients">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">INGREDIENTES DEL PLATO</p>
+            <h2>{{ dishIngredientsDish?.name }}</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="Cerrar"
+            :disabled="dishIngredientsSaving || dishIngredientsGenerating"
+            @click="closeDishIngredients"
+          >
+            <PhX :size="22" weight="regular" />
+          </button>
+        </div>
+        <div class="dish-ingredients-editor-scroll">
+          <p class="muted">
+            Añádelos uno a uno o deja que la IA proponga una lista. Se guardarán para preparar tus
+            próximas compras.
+          </p>
+          <div class="dish-ingredients-list">
+            <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row">
+              <span>{{ index + 1 }}</span>
+              <input
+                v-model="dishIngredientsDraft[index]"
+                type="text"
+                maxlength="190"
+                list="ingredient-suggestions"
+                placeholder="Ej.: tomate triturado"
+              />
+              <button
+                type="button"
+                class="icon-button ingredient-remove-button"
+                aria-label="Eliminar ingrediente"
+                @click="removeDishIngredient(index)"
+              >
+                <PhTrash :size="17" />
+              </button>
+            </label>
+          </div>
+          <button type="button" class="secondary-button add-ingredient-button" @click="addDishIngredient">
+            <PhPlus :size="17" /> Añadir ingrediente
+          </button>
+        </div>
+        <div class="modal-footer dish-ingredients-footer">
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="dishIngredientsSaving || dishIngredientsGenerating"
+            @click="generateDishIngredients"
+          >
+            <PhSparkle :size="17" weight="fill" />
+            {{ dishIngredientsGenerating ? 'Generando…' : 'Generar con IA' }}
+          </button>
+          <div>
+            <button
+              type="button"
+              class="secondary-button"
+              :disabled="dishIngredientsSaving || dishIngredientsGenerating"
+              @click="closeDishIngredients"
+            >
+              Cancelar
+            </button>
+            <button type="submit" class="primary-button" :disabled="dishIngredientsSaving || dishIngredientsGenerating">
+              {{ dishIngredientsSaving ? 'Guardando…' : 'Guardar ingredientes' }}
+            </button>
+          </div>
+        </div>
+      </form>
+    </dialog>
 
     <dialog v-if="tupperEditorOpen" open class="modal-backdrop" @click.self="closeTupperEditor">
       <form class="modal-card tupper-editor-card" @submit.prevent="saveTupper">
@@ -3537,6 +3880,39 @@ onUnmounted(() => {
           <p class="settings-note">
             Puedes cambiarlo cuando quieras. Tus platos guardados no se borran.
           </p>
+          <section class="calendar-export-settings settings-section-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">CALENDARIO</p>
+                <h3>Horarios de tus comidas</h3>
+              </div>
+              <PhCalendarCheck :size="23" weight="duotone" aria-hidden="true" />
+            </div>
+            <p class="muted">
+              Configura una hora para que el evento tenga duración. Si lo dejas vacío, se añadirá
+              como evento de día completo.
+            </p>
+            <div class="meal-time-settings">
+              <label v-for="meal in allMeals" :key="meal" class="field-label"
+                >{{ mealLabels[meal] }}<input
+                  v-model="preferences[`${meal}_time`]"
+                  type="time"
+                  :aria-label="`Hora de ${mealLabels[meal].toLowerCase()}`"
+              /></label>
+            </div>
+            <button
+              type="button"
+              class="secondary-button calendar-export-button"
+              :disabled="calendarExporting"
+              @click="exportMealCalendar"
+            >
+              <PhDownloadSimple :size="18" />
+              {{ calendarExporting ? 'Generando calendario…' : 'Descargar calendario (.ics)' }}
+            </button>
+            <small class="settings-note calendar-export-note"
+              >Descarga los menús planificados de los próximos 12 meses para tu cuenta.</small
+            >
+          </section>
         </section>
         <section
           v-if="activeSettingsTab === 'alerts' && isGroupOwner"
@@ -4006,6 +4382,9 @@ onUnmounted(() => {
     </dialog>
     <datalist id="dish-suggestions">
       <option v-for="dish in dishes" :key="dish.id" :value="dish.name"></option>
+    </datalist>
+    <datalist id="ingredient-suggestions">
+      <option v-for="ingredient in ingredientCatalog" :key="ingredient" :value="ingredient"></option>
     </datalist>
   </div>
 </template>

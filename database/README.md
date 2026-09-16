@@ -13,8 +13,8 @@ La identidad continúa viviendo en `alonsoftware.alon_api_users`; las tablas
 
 Tablas actuales:
 
-- `md_preferences`: preferencias de usuario, grupo actual y valores por defecto
-  de los avisos.
+- `md_preferences`: preferencias de usuario, grupo actual, horarios opcionales
+  de desayuno/comida/cena y valores por defecto de los avisos.
 - `md_groups`, `md_group_members`, `md_group_invites`: colaboración e
   invitaciones.
 - `md_daily_options`: condiciones diarias configurables por el propietario.
@@ -23,6 +23,10 @@ Tablas actuales:
 - `md_notifications`, `md_notification_reads`: actividad del grupo y lectura
   independiente por usuario.
 - `md_dishes`: catálogo de platos.
+- `md_ingredients`: catálogo único de ingredientes, sin duplicados.
+- `md_user_ingredients`: ingredientes disponibles en el catálogo personal de cada usuario y su preferencia de exclusión de la lista de la compra.
+- `md_dish_ingredient_links`: relación de ingredientes con platos por usuario.
+- `md_dish_ingredients`: formato JSON legado, migrado automáticamente a las dos tablas normalizadas anteriores.
 - `md_dish_favorites`: favoritos de cada usuario, incluidos los platos iniciales compartidos.
 - `md_week_menus`, `md_menu_days`, `md_menu_meals`: planificación semanal,
   comidas asignadas y configuración de avisos por comida, incluidos los avisos

@@ -946,6 +946,81 @@ textarea:focus {
   color: #fff;
   background: var(--green);
 }
+.shopping-meal-selection {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+.shopping-meal-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.75rem 0.8rem 0.75rem 2.55rem;
+  color: var(--ink);
+  background: #fbfcfa;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  text-align: left;
+  transition: 0.2s;
+}
+.shopping-meal-option:hover {
+  border-color: #b7d5bd;
+  transform: translateY(-1px);
+}
+.shopping-meal-option.selected {
+  border-color: #a9cdb1;
+  background: var(--soft-green);
+}
+.shopping-meal-check {
+  position: absolute;
+  top: 50%;
+  left: 0.8rem;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #cbd6cc;
+  border-radius: 5px;
+  color: transparent;
+  background: #fff;
+  transform: translateY(-50%);
+}
+.shopping-meal-option.selected .shopping-meal-check {
+  border-color: var(--green);
+  color: #fff;
+  background: var(--green);
+}
+.shopping-meal-option .meal-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--green);
+  background: #fff;
+  border-radius: 10px;
+}
+.shopping-meal-option-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.shopping-meal-option-copy small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  text-transform: capitalize;
+}
+.shopping-meal-option-copy strong {
+  overflow: hidden;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
 .shopping-selection-footer {
   display: flex;
   align-items: center;
@@ -3279,6 +3354,28 @@ textarea:focus,
 .settings-tab-panel .meal-settings {
   margin: 0;
 }
+.calendar-export-settings {
+  margin-top: 1rem;
+}
+.calendar-export-settings > .muted {
+  margin: 0.55rem 0 1.1rem;
+  font-size: 0.82rem;
+}
+.meal-time-settings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.calendar-export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.calendar-export-settings > .calendar-export-note {
+  display: block;
+  margin-top: 0.7rem;
+}
 .settings-note {
   margin: 1rem 0 0;
 }
@@ -3573,6 +3670,9 @@ textarea:focus,
   .option-form-primary,
   .alert-form-row,
   .alert-form-settings {
+    grid-template-columns: 1fr;
+  }
+  .meal-time-settings {
     grid-template-columns: 1fr;
   }
   .option-form-row {
@@ -4602,6 +4702,271 @@ textarea:focus,
   font-size: 0.66rem;
   text-align: center;
 }
+.dish-ingredients-status {
+  color: var(--green) !important;
+}
+.dish-ingredients-button {
+  flex: 0 0 auto;
+  color: var(--green);
+  background: var(--soft-green);
+  border-color: #c7dfcd;
+}
+.dish-ingredients-editor-card {
+  width: min(620px, calc(100vw - 2rem));
+}
+.dish-ingredients-editor-scroll {
+  max-height: min(58vh, 540px);
+  overflow: auto;
+  padding: 0.25rem 1.4rem 1.2rem;
+}
+.dish-ingredients-editor-scroll > .muted {
+  margin: 0 0 1rem;
+  font-size: 0.84rem;
+}
+.dish-ingredients-list {
+  display: grid;
+  gap: 0.55rem;
+}
+.ingredient-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.ingredient-row > span {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  color: var(--green);
+  background: var(--soft-green);
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.ingredient-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.7rem 0.8rem;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+}
+.ingredient-row input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px #2c6b4c18;
+}
+.ingredient-remove-button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #a04b4b;
+}
+.add-ingredient-button {
+  margin-top: 0.9rem;
+}
+.dish-ingredients-footer {
+  align-items: center;
+  gap: 0.75rem;
+}
+.dish-ingredients-footer > div {
+  display: flex;
+  gap: 0.55rem;
+  margin-left: auto;
+}
+@media (max-width: 760px) {
+  .dish-library-card {
+    flex-wrap: wrap;
+  }
+  .dish-library-copy {
+    min-width: calc(100% - 110px);
+  }
+  .dish-ingredients-button,
+  .dish-photo-actions {
+    flex: 1 1 auto;
+  }
+  .dish-ingredients-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .dish-ingredients-footer > div {
+    margin-left: 0;
+  }
+.dish-ingredients-footer > div > * {
+    flex: 1;
+  }
+}
+.ingredients-page {
+  padding-bottom: 2rem;
+}
+.ingredients-heading {
+  align-items: flex-end;
+}
+.ingredient-create-form {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 1.25rem 0 1rem;
+  padding: 0.65rem 0.75rem 0.65rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  box-shadow: 0 9px 25px rgba(32, 67, 110, 0.035);
+}
+.ingredient-create-form > svg {
+  flex: 0 0 auto;
+  color: var(--green);
+}
+.ingredient-create-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+.ingredients-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 1.3rem 0;
+}
+.ingredients-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.ingredients-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.ingredient-catalog-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 8px 20px rgba(32, 67, 110, 0.025);
+}
+.ingredient-catalog-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: var(--green);
+  background: var(--soft-green);
+  border-radius: 13px;
+}
+.ingredient-catalog-copy {
+  min-width: 0;
+  flex: 1;
+}
+.ingredient-catalog-copy strong,
+.ingredient-catalog-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ingredient-catalog-copy strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+.ingredient-catalog-copy small {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.ingredient-shopping-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+  padding: 0.38rem 0.5rem;
+  color: var(--muted);
+  background: #f7f9f6;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ingredient-shopping-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.ingredient-shopping-toggle.active {
+  color: #9a641e;
+  background: #fff6dc;
+  border-color: #efd38d;
+}
+.ingredient-shopping-toggle:focus-within {
+  outline: 2px solid #2c6b4c55;
+  outline-offset: 2px;
+}
+.ingredient-delete-button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #a04b4b;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+}
+.ingredient-delete-button:hover {
+  background: #fff1ef;
+}
+.ingredient-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+.ingredients-empty-state {
+  margin-top: 1rem;
+}
+@media (max-width: 980px) {
+  .ingredients-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 620px) {
+  .ingredient-create-form {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .ingredient-create-form input {
+    flex-basis: calc(100% - 2rem);
+  }
+  .ingredient-create-form .primary-button {
+    width: 100%;
+  }
+  .ingredients-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .ingredients-grid {
+    grid-template-columns: 1fr;
+  }
+  .ingredient-shopping-toggle span {
+    display: none;
+  }
+}
 .empty-state {
   display: grid;
   justify-items: center;
@@ -5259,5 +5624,298 @@ textarea:focus,
   .calendar-meal-dot svg {
     width: 11px;
     height: 11px;
+  }
+}
+
+/* Loading states: preserve the layout while data is arriving. */
+.app-loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(217, 234, 255, 0.92), transparent 34rem), #f6f9fd;
+}
+.app-loading-screen::before,
+.app-loading-screen::after {
+  position: absolute;
+  width: 18rem;
+  height: 18rem;
+  border: 1px solid rgba(23, 105, 232, 0.08);
+  border-radius: 50%;
+  content: '';
+  pointer-events: none;
+}
+.app-loading-screen::before {
+  transform: translate(-23rem, -14rem);
+}
+.app-loading-screen::after {
+  transform: translate(25rem, 16rem) scale(1.45);
+}
+.app-loading-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  width: min(100%, 280px);
+  text-align: center;
+}
+.app-loading-logo-wrap {
+  position: relative;
+  margin-bottom: 1.25rem;
+}
+.app-loading-logo-wrap .loading-logo {
+  position: relative;
+  z-index: 1;
+  width: 88px;
+  height: 88px;
+  border-radius: 27px;
+  box-shadow: 0 18px 34px rgba(23, 105, 232, 0.2);
+  animation: loading-float 2.4s ease-in-out infinite;
+}
+.app-loading-pulse {
+  position: absolute;
+  inset: -14px;
+  border: 1px solid rgba(23, 105, 232, 0.2);
+  border-radius: 38px;
+  animation: loading-pulse 2.4s ease-out infinite;
+}
+.app-loading-content .loading-copy {
+  gap: 0.3rem;
+}
+.app-loading-content .loading-copy strong {
+  font-size: 1.55rem;
+}
+.app-loading-content .loading-copy span {
+  font-size: 0.8rem;
+}
+.loading-progress {
+  width: 116px;
+  height: 4px;
+  margin-top: 1.45rem;
+  overflow: hidden;
+  background: #dfeaf7;
+  border-radius: 999px;
+}
+.loading-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  background: var(--blue);
+  border-radius: inherit;
+  animation: loading-progress 1.5s ease-in-out infinite;
+}
+@keyframes loading-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(2deg);
+  }
+}
+@keyframes loading-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.88);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+@keyframes loading-progress {
+  0% {
+    transform: translateX(-130%);
+  }
+  55%,
+  100% {
+    transform: translateX(310%);
+  }
+}
+.dashboard-skeleton-grid {
+  pointer-events: none;
+}
+.skeleton-line,
+.skeleton-circle,
+.skeleton-pill,
+.skeleton-square,
+.skeleton-edit {
+  display: block;
+  background: linear-gradient(100deg, #e7eef6 20%, #f8fbff 45%, #e7eef6 70%);
+  background-size: 260% 100%;
+  animation: skeleton-shimmer 1.45s ease-in-out infinite;
+}
+.skeleton-line {
+  height: 0.72rem;
+  border-radius: 999px;
+}
+.skeleton-circle {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+}
+.skeleton-pill {
+  width: 42px;
+  height: 26px;
+  border-radius: 999px;
+}
+.skeleton-day-card {
+  opacity: 0.92;
+}
+.skeleton-day-card .day-header {
+  padding-bottom: 0.8rem;
+}
+.skeleton-day-name {
+  width: 7.5rem;
+  height: 1rem;
+}
+.skeleton-day-date {
+  width: 5.2rem;
+  height: 0.65rem;
+  margin-top: 0.45rem;
+}
+.skeleton-meal-card {
+  cursor: default;
+}
+.skeleton-meal-card .meal-content {
+  display: grid;
+  align-content: start;
+  gap: 0.42rem;
+  padding-top: 0.1rem;
+}
+.skeleton-meal-label {
+  width: 4.5rem;
+  height: 0.55rem;
+}
+.skeleton-meal-title {
+  width: min(72%, 16rem);
+  height: 0.85rem;
+}
+.skeleton-meal-meta {
+  width: 5.5rem;
+  height: 0.55rem;
+}
+.skeleton-edit {
+  width: 6.5rem;
+  height: 0.7rem;
+  margin-top: 0.85rem;
+}
+.catalog-skeleton-grid {
+  pointer-events: none;
+}
+.skeleton-dish-photo {
+  display: block;
+  flex: 0 0 auto;
+  width: 58px;
+  height: 58px;
+  background: linear-gradient(100deg, #e7eef6 20%, #f8fbff 45%, #e7eef6 70%);
+  background-size: 260% 100%;
+  border-radius: 13px;
+  animation: skeleton-shimmer 1.45s ease-in-out infinite;
+}
+.skeleton-dish-card .dish-library-copy {
+  display: grid;
+  gap: 0.42rem;
+}
+.skeleton-dish-title {
+  width: 70%;
+  height: 0.8rem;
+}
+.skeleton-dish-meta {
+  width: 42%;
+  height: 0.58rem;
+}
+.skeleton-dish-heart {
+  flex: 0 0 auto;
+  display: block;
+  width: 28px;
+  height: 28px;
+  background: #dfeaf7;
+  border-radius: 50%;
+  animation: skeleton-shimmer 1.45s ease-in-out infinite;
+}
+.shopping-skeleton-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+.skeleton-shopping-day {
+  min-height: 64px;
+  pointer-events: none;
+}
+.skeleton-square {
+  position: absolute;
+  top: 0.9rem;
+  left: 0.8rem;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+.skeleton-shopping-title {
+  width: 72%;
+  height: 0.72rem;
+}
+.skeleton-shopping-meta {
+  width: 52%;
+  height: 0.58rem;
+}
+.calendar-skeleton-grid {
+  padding: 0.35rem 0.7rem 0.7rem;
+}
+.calendar-skeleton-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid #edf2f7;
+}
+.calendar-skeleton-week:last-child {
+  border-bottom: 0;
+}
+.calendar-skeleton-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 78px;
+  padding: 0.7rem 0.25rem 0.5rem;
+}
+.calendar-skeleton-cell .skeleton-circle {
+  width: 29px;
+  height: 29px;
+}
+.skeleton-calendar-dot {
+  width: 26px;
+  height: 0.45rem;
+}
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+@media (max-width: 620px) {
+  .shopping-skeleton-list {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-logo-wrap .loading-logo,
+  .app-loading-pulse,
+  .loading-progress span,
+  .skeleton-line,
+  .skeleton-circle,
+  .skeleton-pill,
+  .skeleton-square,
+  .skeleton-edit,
+  .skeleton-dish-photo,
+  .skeleton-dish-heart {
+    animation: none;
   }
 }
