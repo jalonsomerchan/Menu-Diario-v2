@@ -6,6 +6,7 @@ const router = createRouter({
     { path: '/', name: 'dashboard' },
     { path: '/platos', name: 'dishes' },
     { path: '/ingredientes', name: 'ingredients' },
+    { path: '/ingredientes/unificar', name: 'ingredient-merge' },
     { path: '/tuppers', name: 'tuppers' },
     { path: '/compra', name: 'shopping' },
     { path: '/calendario', name: 'calendar' },

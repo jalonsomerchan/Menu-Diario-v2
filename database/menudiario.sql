@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS md_preferences (
   breakfast_time VARCHAR(5) NULL DEFAULT NULL,
   lunch_time VARCHAR(5) NULL DEFAULT NULL,
   dinner_time VARCHAR(5) NULL DEFAULT NULL,
+  calendar_token VARCHAR(96) NULL,
   notification_enabled TINYINT(1) NOT NULL DEFAULT 1,
   notification_types VARCHAR(255) NOT NULL DEFAULT '["meal_added","meal_updated","meal_moved","group","reminder"]',
   telegram_user_id VARCHAR(64) NULL,

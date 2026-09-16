@@ -53,7 +53,6 @@ import {
 } from '@phosphor-icons/vue'
 import { ApiError, getJson, postJson, uploadFile } from './lib/api'
 import { formatDay, fromIsoDate, mondayOf, shiftDate, toIsoDate } from './lib/dates'
-import { buildMealCalendar } from './lib/ical'
 import {
   getFirebaseAuth,
   hasFirebaseConfig,
@@ -210,6 +209,10 @@ const ingredientSearch = ref('')
 const ingredientDraft = ref('')
 const ingredientSaving = ref(false)
 const ingredientDeleting = ref('')
+const ingredientMergeSearch = ref('')
+const ingredientMergeSelected = ref(new Set())
+const ingredientMergeKeepId = ref('')
+const ingredientMerging = ref(false)
 const calendarMonth = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
 const calendarDays = ref(new Map())
 const calendarLoading = ref(true)
@@ -218,11 +221,13 @@ const calendarSelectedDay = ref(null)
 const shoppingSelectedDishes = ref(new Set())
 const shoppingSelectionInitialized = ref(false)
 const shoppingItems = ref([])
+const shoppingExcludedItems = ref([])
 const shoppingGenerating = ref(false)
 const shoppingChecked = ref(new Set())
 const shoppingErrorDetails = ref('')
 const shoppingErrorModal = ref(null)
-const calendarExporting = ref(false)
+const calendarFeedLink = ref('')
+const calendarFeedLoading = ref(false)
 const shoppingAlexaUrl = 'alexa://index.html#lists/shopping'
 const rouletteOpen = ref(false)
 const rouletteSpinning = ref(false)
@@ -273,6 +278,7 @@ const publicAsset = (path) => `${baseUrl}${path.replace(/^\/+/, '')}`
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
 const isIngredients = computed(() => route.name === 'ingredients')
+const isIngredientMerge = computed(() => route.name === 'ingredient-merge')
 const isTuppers = computed(() => route.name === 'tuppers')
 const isShopping = computed(() => route.name === 'shopping')
 const isCalendar = computed(() => route.name === 'calendar')
@@ -301,6 +307,16 @@ const filteredIngredients = computed(() => {
   return ingredientList.value.filter((ingredient) =>
     !query || ingredient.name.toLocaleLowerCase('es').includes(query),
   )
+})
+const filteredMergeIngredients = computed(() => {
+  const query = ingredientMergeSearch.value.trim().toLocaleLowerCase('es')
+  return ingredientList.value.filter(
+    (ingredient) => !query || ingredient.name.toLocaleLowerCase('es').includes(query),
+  )
+})
+const selectedMergeIngredients = computed(() => {
+  const selected = ingredientMergeSelected.value
+  return ingredientList.value.filter((ingredient) => selected.has(Number(ingredient.id)))
 })
 const tupperStats = computed(() => ({
   containers: tuppers.value.length,
@@ -375,11 +391,17 @@ const shoppingAvailableDishes = computed(() =>
             date: entry.date,
             meal,
             dish,
+            ingredientCount: shoppingDishIngredientCount(dish),
             key: `${entry.isoDate}-${meal}-${dishIndex}`,
           }))
     })
   }),
 )
+function shoppingDishIngredientCount(name) {
+  const normalized = normalizeDishName(name)
+  const dish = dishes.value.find((item) => normalizeDishName(item.name) === normalized)
+  return Array.isArray(dish?.ingredients) ? dish.ingredients.length : 0
+}
 const shoppingMeals = computed(() => {
   const grouped = new Map()
   shoppingAvailableDishes.value.forEach((dish) => {
@@ -398,7 +420,9 @@ const shoppingMeals = computed(() => {
   return [...grouped.values()]
 })
 const shoppingToBuyItems = computed(() =>
-  shoppingItems.value.filter((_, index) => !shoppingChecked.value.has(index)),
+  shoppingItems.value
+    .filter((_, index) => !shoppingChecked.value.has(index))
+    .map((item) => item.name),
 )
 const hasUnreadNotifications = computed(() => notificationUnreadCount.value > 0)
 const defaultRouletteDishes = [
@@ -836,8 +860,19 @@ async function generateShoppingList() {
       })),
     })
     shoppingItems.value = (data.items || [])
-      .map((item) => (typeof item === 'string' ? item : item?.name || ''))
-      .filter(Boolean)
+      .map((item) =>
+        typeof item === 'string'
+          ? { name: item, dishes: [] }
+          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [] },
+      )
+      .filter((item) => item.name)
+    shoppingExcludedItems.value = (data.excluded_items || [])
+      .map((item) =>
+        typeof item === 'string'
+          ? { name: item, dishes: [] }
+          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [] },
+      )
+      .filter((item) => item.name)
     if (Array.isArray(data.dishes)) dishes.value = data.dishes
     if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
     if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
@@ -864,7 +899,7 @@ async function generateShoppingList() {
 
 async function copyShoppingList() {
   if (!shoppingItems.value.length) return
-  const text = shoppingItems.value.map((item) => `☐ ${item}`).join('\n')
+  const text = shoppingItems.value.map((item) => `☐ ${item.name}`).join('\n')
   try {
     await navigator.clipboard.writeText(text)
     notice.value = 'Lista copiada al portapapeles.'
@@ -1007,6 +1042,60 @@ async function saveIngredient() {
     error.value = reason instanceof Error ? reason.message : 'No se pudo añadir el ingrediente.'
   } finally {
     ingredientSaving.value = false
+  }
+}
+function toggleIngredientMergeSelection(ingredient) {
+  if (!ingredient?.id || ingredientMerging.value) return
+  const id = Number(ingredient.id)
+  const next = new Set(ingredientMergeSelected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  ingredientMergeSelected.value = next
+  if (!next.has(Number(ingredientMergeKeepId.value)))
+    ingredientMergeKeepId.value = next.values().next().value || ''
+}
+function clearIngredientMergeSelection() {
+  if (ingredientMerging.value) return
+  ingredientMergeSelected.value = new Set()
+  ingredientMergeKeepId.value = ''
+}
+async function mergeSelectedIngredients() {
+  if (ingredientMergeSelected.value.size < 2 || ingredientMerging.value) return
+  const selected = selectedMergeIngredients.value
+  const keepId = Number(ingredientMergeKeepId.value || selected[0]?.id)
+  const keep = selected.find((item) => Number(item.id) === keepId) || selected[0]
+  const mergeIds = selected
+    .filter((item) => Number(item.id) !== Number(keep.id))
+    .map((item) => Number(item.id))
+  if (!mergeIds.length) return
+  const mergedNames = selected
+    .filter((item) => Number(item.id) !== Number(keep.id))
+    .map((item) => `«${item.name}»`)
+    .join(', ')
+  if (
+    !window.confirm(
+      `¿Unificar ${mergedNames} en «${keep.name}»? Sus platos y preferencias de compra se conservarán.`,
+    )
+  )
+    return
+  ingredientMerging.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/merge_ingredients', userToken.value, {
+      keep_id: keep.id,
+      merge_ids: mergeIds,
+    })
+    ingredientCatalog.value = data.ingredients || ingredientCatalog.value
+    ingredientList.value = data.ingredient_list || ingredientList.value
+    if (Array.isArray(data.dishes)) dishes.value = data.dishes
+    ingredientMergeSelected.value = new Set()
+    ingredientMergeKeepId.value = ''
+    notice.value = `Ingredientes unificados en «${keep.name}».`
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron unificar los ingredientes.'
+  } finally {
+    ingredientMerging.value = false
   }
 }
 async function toggleIngredientShopping(ingredient) {
@@ -1332,9 +1421,15 @@ async function logout() {
   shoppingSelectedDishes.value = new Set()
   shoppingSelectionInitialized.value = false
   shoppingItems.value = []
+  shoppingExcludedItems.value = []
   shoppingChecked.value = new Set()
+  ingredientMergeSelected.value = new Set()
+  ingredientMergeKeepId.value = ''
+  ingredientMerging.value = false
   shoppingErrorDetails.value = ''
   shoppingErrorModal.value = null
+  calendarFeedLink.value = ''
+  calendarFeedLoading.value = false
   photoUploadingDish.value = ''
   photoDeletingDish.value = ''
   tuppers.value = []
@@ -1395,37 +1490,27 @@ async function savePreferences() {
   }
 }
 
-async function exportMealCalendar() {
-  if (calendarExporting.value || !user.value) return
-  calendarExporting.value = true
+async function loadCalendarFeedLink() {
+  if (calendarFeedLoading.value || !user.value) return
+  calendarFeedLoading.value = true
   error.value = ''
   try {
-    const rangeStart = toIsoDate(new Date())
-    const rangeEnd = shiftDate(rangeStart, 365)
-    const data = await fetchRange(rangeStart, rangeEnd, false)
-    const calendar = buildMealCalendar({
-      uid: user.value.uid,
-      days: data.days,
-      times: {
-        breakfast: preferences.breakfast_time,
-        lunch: preferences.lunch_time,
-        dinner: preferences.dinner_time,
-      },
-    })
-    const blob = new Blob([calendar], { type: 'text/calendar;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'menu-diario.ics'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-    notice.value = 'Calendario descargado. Incluye los próximos 12 meses.'
+    await refreshToken()
+    const data = await getJson('menudiario/ical_link', userToken.value)
+    calendarFeedLink.value = data.url || ''
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : 'No se pudo generar el calendario.'
+    error.value = reason instanceof Error ? reason.message : 'No se pudo preparar el enlace del calendario.'
   } finally {
-    calendarExporting.value = false
+    calendarFeedLoading.value = false
+  }
+}
+async function copyCalendarFeedLink() {
+  if (!calendarFeedLink.value) return
+  try {
+    await navigator.clipboard.writeText(calendarFeedLink.value)
+    notice.value = 'Enlace del calendario copiado.'
+  } catch {
+    error.value = 'No se pudo copiar el enlace. Selecciónalo manualmente.'
   }
 }
 function stopTelegramPolling() {
@@ -2184,6 +2269,10 @@ function goToIngredients() {
   menuOpen.value = false
   router.push({ name: 'ingredients' })
 }
+function goToIngredientMerge() {
+  menuOpen.value = false
+  router.push({ name: 'ingredient-merge' })
+}
 function goToTuppers() {
   menuOpen.value = false
   router.push({ name: 'tuppers' })
@@ -2363,6 +2452,8 @@ onUnmounted(() => {
             <PhForkKnife :size="19" weight="regular" /><span>Mis platos</span></button
           ><button type="button" :class="{ active: isIngredients }" @click="goToIngredients">
             <PhLeaf :size="19" weight="regular" /><span>Ingredientes</span></button
+          ><button type="button" :class="{ active: isIngredientMerge }" @click="goToIngredientMerge">
+            <PhArrowsClockwise :size="19" weight="regular" /><span>Fusionar ingredientes</span></button
           ><button type="button" :class="{ active: isTuppers }" @click="goToTuppers">
             <PhCookingPot :size="19" weight="regular" /><span>Mis tuppers</span></button
           ><button type="button" :class="{ active: isShopping }" @click="goToShopping">
@@ -2731,24 +2822,21 @@ onUnmounted(() => {
                   {{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}
                 </small>
               </div>
-              <label
+              <button
+                type="button"
                 class="ingredient-shopping-toggle"
                 :class="{ active: ingredient.exclude_from_shopping }"
+                :aria-pressed="ingredient.exclude_from_shopping"
                 :title="
                   ingredient.exclude_from_shopping
                     ? 'Volver a añadir a la lista de la compra'
                     : 'No añadir a la lista de la compra'
                 "
-                @click.stop
+                @click.stop.prevent="toggleIngredientShopping(ingredient)"
               >
-                <input
-                  type="checkbox"
-                  :checked="ingredient.exclude_from_shopping"
-                  @change="toggleIngredientShopping(ingredient)"
-                />
                 <PhShoppingCart :size="16" />
                 <span>No añadir</span>
-              </label>
+              </button>
               <button
                 type="button"
                 class="ingredient-delete-button"
@@ -2761,6 +2849,114 @@ onUnmounted(() => {
               </button>
             </article>
           </section>
+        </section>
+        <section v-else-if="isIngredientMerge" class="ingredient-merge-page">
+          <div class="page-heading ingredient-merge-page-heading">
+            <div>
+              <p class="eyebrow">GESTIÓN DEL CATÁLOGO</p>
+              <h1>Fusionar ingredientes</h1>
+              <p class="muted">
+                Selecciona manualmente dos o más ingredientes que representen lo mismo y decide
+                qué nombre conservar.
+              </p>
+            </div>
+            <button type="button" class="secondary-button" @click="goToIngredients">
+              <PhArrowLeft :size="17" /> Volver a Ingredientes
+            </button>
+          </div>
+          <div v-if="!ingredientList.length" class="empty-state ingredients-empty-state">
+            <PhLeaf :size="34" weight="regular" />
+            <h2>No hay ingredientes para fusionar</h2>
+            <p>Añade ingredientes desde la página de Ingredientes.</p>
+          </div>
+          <div v-else class="ingredient-merge-layout">
+            <section class="ingredient-merge-picker" aria-labelledby="ingredient-merge-picker-title">
+              <div class="ingredient-merge-picker-heading">
+                <div>
+                  <h2 id="ingredient-merge-picker-title">Selecciona los ingredientes</h2>
+                  <p>La selección es completamente manual.</p>
+                </div>
+                <span class="ingredient-merge-selection-count">
+                  {{ ingredientMergeSelected.size }} seleccionados
+                </span>
+              </div>
+              <label class="search-field ingredient-merge-search"
+                ><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input
+                  v-model="ingredientMergeSearch"
+                  type="search"
+                  placeholder="Buscar ingredientes"
+                  aria-label="Buscar ingredientes para fusionar" /></label
+              >
+              <div v-if="!filteredMergeIngredients.length" class="ingredient-merge-no-results">
+                No hay ingredientes que coincidan con la búsqueda.
+              </div>
+              <div v-else class="ingredient-merge-options">
+                <label
+                  v-for="ingredient in filteredMergeIngredients"
+                  :key="ingredient.id"
+                  class="ingredient-merge-option"
+                  :class="{ selected: ingredientMergeSelected.has(Number(ingredient.id)) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="ingredientMergeSelected.has(Number(ingredient.id))"
+                    @change="toggleIngredientMergeSelection(ingredient)"
+                  />
+                  <span class="ingredient-merge-option-check"><PhCheck :size="14" weight="bold" /></span>
+                  <span class="ingredient-merge-option-copy">
+                    <strong>{{ ingredient.name }}</strong>
+                    <small>
+                      {{ ingredient.dish_count }}
+                      {{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}
+                      <span v-if="ingredient.exclude_from_shopping"> · no añadir</span>
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </section>
+            <aside class="ingredient-merge-summary">
+              <div class="ingredient-merge-summary-icon"><PhArrowsClockwise :size="24" /></div>
+              <h2>Fusionar selección</h2>
+              <p v-if="ingredientMergeSelected.size < 2">
+                Selecciona al menos dos ingredientes para poder fusionarlos.
+              </p>
+              <template v-else>
+                <p>
+                  Los platos pasarán a usar un único ingrediente. La marca de exclusión se
+                  conservará si alguno de los seleccionados la tiene.
+                </p>
+                <label class="ingredient-merge-keep-field">
+                  <span>Nombre que se conservará</span>
+                  <select v-model.number="ingredientMergeKeepId">
+                    <option
+                      v-for="ingredient in selectedMergeIngredients"
+                      :key="ingredient.id"
+                      :value="ingredient.id"
+                    >
+                      {{ ingredient.name }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  class="primary-button ingredient-merge-submit"
+                  :disabled="ingredientMerging"
+                  @click="mergeSelectedIngredients"
+                >
+                  <PhArrowsClockwise :size="17" />
+                  {{ ingredientMerging ? 'Fusionando…' : 'Fusionar ingredientes' }}
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button ingredient-merge-clear"
+                  :disabled="ingredientMerging"
+                  @click="clearIngredientMergeSelection"
+                >
+                  Limpiar selección
+                </button>
+              </template>
+            </aside>
+          </div>
         </section>
         <section v-else-if="isTuppers" class="tuppers-page">
           <div class="page-heading tuppers-heading">
@@ -2966,7 +3162,11 @@ onUnmounted(() => {
                   <span class="shopping-meal-check"><PhCheck :size="15" weight="bold" /></span>
                   <span class="meal-icon"><component :is="mealIcons[dish.meal]" :size="19" /></span>
                   <span class="shopping-meal-option-copy">
-                    <small>{{ formatDay(dish.date) }} · {{ mealLabels[dish.meal] }}</small>
+                    <small
+                      >{{ formatDay(dish.date) }} · {{ mealLabels[dish.meal] }} ·
+                      {{ dish.ingredientCount }}
+                      {{ dish.ingredientCount === 1 ? 'ingrediente' : 'ingredientes' }}</small
+                    >
                     <strong>{{ dish.dish }}</strong>
                   </span>
                 </button>
@@ -3013,16 +3213,17 @@ onUnmounted(() => {
                 <strong>Preparando tu compra…</strong>
                 <span>Estoy agrupando ingredientes repetidos.</span>
               </div>
-              <div v-else-if="shoppingItems.length" class="shopping-result-content">
+              <div v-else-if="shoppingItems.length || shoppingExcludedItems.length" class="shopping-result-content">
                 <div class="shopping-result-toolbar">
                   <span
                     ><strong>{{ shoppingItems.length - shoppingChecked.size }}</strong> por
                     comprar</span
                   >
-                  <button type="button" class="secondary-button" @click="copyShoppingList">
+                  <button v-if="shoppingItems.length" type="button" class="secondary-button" @click="copyShoppingList">
                     <PhNote :size="17" /> Copiar lista
                   </button>
                   <a
+                    v-if="shoppingItems.length"
                     class="secondary-button shopping-alexa-link"
                     :href="shoppingAlexaUrl"
                     @click.prevent="sendShoppingListToAlexa"
@@ -3033,7 +3234,7 @@ onUnmounted(() => {
                 <div class="shopping-items-list">
                   <label
                     v-for="(item, index) in shoppingItems"
-                    :key="`${item}-${index}`"
+                    :key="`${item.name}-${index}`"
                     class="shopping-item"
                     :class="{ checked: shoppingItemChecked(index) }"
                   >
@@ -3043,10 +3244,27 @@ onUnmounted(() => {
                       @change="toggleShoppingItem(index)"
                     />
                     <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
-                    <span class="shopping-item-copy"
-                      ><strong>{{ item }}</strong></span
-                    >
+                    <span class="shopping-item-copy">
+                      <strong>{{ item.name }}</strong>
+                      <small v-if="item.dishes?.length">{{ item.dishes.join(' · ') }}</small>
+                    </span>
                   </label>
+                </div>
+                <div v-if="shoppingExcludedItems.length" class="shopping-excluded-section">
+                  <div class="shopping-excluded-heading">
+                    <PhShoppingCart :size="17" />
+                    <strong>No añadir a la compra</strong>
+                    <small>Marcados así en Ingredientes</small>
+                  </div>
+                  <div class="shopping-items-list shopping-disabled-items">
+                    <div v-for="item in shoppingExcludedItems" :key="`excluded-${item.name}`" class="shopping-item disabled-shopping-item" aria-disabled="true">
+                      <span class="shopping-item-check"><PhX :size="13" weight="bold" /></span>
+                      <span class="shopping-item-copy">
+                        <strong>{{ item.name }}</strong>
+                        <small v-if="item.dishes?.length">{{ item.dishes.join(' · ') }}</small>
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <div class="shopping-result-actions">
                   <button type="button" class="shopping-regenerate" @click="generateShoppingList">
@@ -3901,16 +4119,31 @@ onUnmounted(() => {
               /></label>
             </div>
             <button
+              v-if="!calendarFeedLink"
               type="button"
               class="secondary-button calendar-export-button"
-              :disabled="calendarExporting"
-              @click="exportMealCalendar"
+              :disabled="calendarFeedLoading"
+              @click="loadCalendarFeedLink"
             >
-              <PhDownloadSimple :size="18" />
-              {{ calendarExporting ? 'Generando calendario…' : 'Descargar calendario (.ics)' }}
+              <PhCalendarCheck :size="18" />
+              {{ calendarFeedLoading ? 'Preparando enlace…' : 'Crear enlace para mi calendario' }}
             </button>
+            <div v-else class="calendar-feed-link-box">
+              <label class="field-label"
+                >Enlace privado del calendario<input :value="calendarFeedLink" readonly
+              /></label>
+              <div class="calendar-feed-actions">
+                <button type="button" class="secondary-button" @click="copyCalendarFeedLink">
+                  Copiar enlace
+                </button>
+                <a class="primary-button" :href="calendarFeedLink" target="_blank" rel="noreferrer"
+                  >Abrir enlace</a
+                >
+              </div>
+            </div>
             <small class="settings-note calendar-export-note"
-              >Descarga los menús planificados de los próximos 12 meses para tu cuenta.</small
+              >Añade este enlace como calendario suscrito. Se actualizará con tus cambios durante
+              los próximos 12 meses.</small
             >
           </section>
         </section>

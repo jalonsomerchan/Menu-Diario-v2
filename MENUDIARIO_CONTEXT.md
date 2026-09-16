@@ -301,7 +301,7 @@ opción mínima.
 
 También acepta `breakfast_time`, `lunch_time` y `dinner_time` por usuario en
 formato `HH:MM`. Un valor vacío o `null` indica que esa comida se exportará
-como evento de día completo en el iCal descargable de los próximos 12 meses.
+como evento de día completo en el feed iCal privado de los próximos 12 meses.
 
 ### Grupos e invitaciones
 

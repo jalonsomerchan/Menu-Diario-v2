@@ -1287,12 +1287,52 @@ textarea:focus {
   text-overflow: ellipsis;
 }
 .shopping-item-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 0.68rem;
 }
 .shopping-item.checked .shopping-item-copy strong {
   color: #9ba69f;
+  text-decoration: line-through;
+}
+.shopping-excluded-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.shopping-excluded-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+  color: var(--muted);
+}
+.shopping-excluded-heading strong {
+  font-size: 0.76rem;
+}
+.shopping-excluded-heading small {
+  margin-left: auto;
+  font-size: 0.65rem;
+}
+.shopping-disabled-items {
+  margin-top: 0;
+}
+.disabled-shopping-item {
+  color: #a6ada7;
+  background: #f5f6f4;
+  border-color: #e4e8e3;
+  opacity: 0.72;
+}
+.disabled-shopping-item .shopping-item-check {
+  color: #a6ada7;
+  background: #e9ece8;
+  border-color: #d7ddd7;
+}
+.disabled-shopping-item .shopping-item-copy strong {
+  color: #929b94;
   text-decoration: line-through;
 }
 .shopping-regenerate {
@@ -3372,6 +3412,23 @@ textarea:focus,
   align-items: center;
   gap: 0.45rem;
 }
+.calendar-feed-link-box {
+  display: grid;
+  gap: 0.75rem;
+}
+.calendar-feed-link-box input {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-feed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+.calendar-feed-actions a {
+  text-decoration: none;
+}
 .calendar-export-settings > .calendar-export-note {
   display: block;
   margin-top: 0.7rem;
@@ -4842,6 +4899,164 @@ textarea:focus,
   font-size: 0.78rem;
   font-weight: 700;
 }
+.ingredient-merge-page {
+  padding-bottom: 2rem;
+}
+.ingredient-merge-page-heading {
+  align-items: center;
+}
+.ingredient-merge-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.6fr);
+  align-items: start;
+  gap: 1rem;
+}
+.ingredient-merge-picker,
+.ingredient-merge-summary {
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 9px 25px rgba(32, 67, 110, 0.035);
+}
+.ingredient-merge-picker-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+.ingredient-merge-picker-heading h2,
+.ingredient-merge-summary h2 {
+  color: var(--ink);
+  font-size: 1.25rem;
+}
+.ingredient-merge-picker-heading p,
+.ingredient-merge-summary p {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+.ingredient-merge-selection-count {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.55rem;
+  color: var(--green);
+  background: var(--soft-green);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.ingredient-merge-search {
+  margin-bottom: 0.7rem;
+}
+.ingredient-merge-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  max-height: 540px;
+  padding-right: 0.2rem;
+  overflow-y: auto;
+}
+.ingredient-merge-option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.65rem;
+  background: #fbfcfa;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+}
+.ingredient-merge-option:hover,
+.ingredient-merge-option.selected {
+  background: var(--soft-green);
+  border-color: #bdd8c4;
+}
+.ingredient-merge-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.ingredient-merge-option-check {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  color: transparent;
+  background: #fff;
+  border: 1px solid #cbd6cc;
+  border-radius: 6px;
+}
+.ingredient-merge-option.selected .ingredient-merge-option-check {
+  color: #fff;
+  background: var(--green);
+  border-color: var(--green);
+}
+.ingredient-merge-option-copy {
+  min-width: 0;
+}
+.ingredient-merge-option-copy strong,
+.ingredient-merge-option-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ingredient-merge-option-copy strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+.ingredient-merge-option-copy small {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+.ingredient-merge-no-results {
+  padding: 1.25rem 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+.ingredient-merge-summary {
+  position: sticky;
+  top: 1rem;
+}
+.ingredient-merge-summary-icon {
+  display: grid;
+  place-items: center;
+  width: 45px;
+  height: 45px;
+  margin-bottom: 0.8rem;
+  color: var(--green);
+  background: var(--soft-green);
+  border-radius: 13px;
+}
+.ingredient-merge-keep-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.ingredient-merge-keep-field select {
+  width: 100%;
+  padding: 0.65rem 0.7rem;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.77rem;
+}
+.ingredient-merge-submit,
+.ingredient-merge-clear {
+  width: 100%;
+  margin-top: 0.7rem;
+}
 .ingredients-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4903,19 +5118,12 @@ textarea:focus,
   cursor: pointer;
   white-space: nowrap;
 }
-.ingredient-shopping-toggle input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
 .ingredient-shopping-toggle.active {
   color: #9a641e;
   background: #fff6dc;
   border-color: #efd38d;
 }
-.ingredient-shopping-toggle:focus-within {
+.ingredient-shopping-toggle:focus-visible {
   outline: 2px solid #2c6b4c55;
   outline-offset: 2px;
 }
@@ -4959,6 +5167,19 @@ textarea:focus,
   .ingredients-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+  .ingredient-merge-layout {
+    grid-template-columns: 1fr;
+  }
+  .ingredient-merge-summary {
+    position: static;
+  }
+  .ingredient-merge-options {
+    grid-template-columns: 1fr;
+  }
+  .ingredient-merge-submit,
+  .ingredient-merge-clear {
+    width: 100%;
   }
   .ingredients-grid {
     grid-template-columns: 1fr;

@@ -14,7 +14,8 @@ La identidad continúa viviendo en `alonsoftware.alon_api_users`; las tablas
 Tablas actuales:
 
 - `md_preferences`: preferencias de usuario, grupo actual, horarios opcionales
-  de desayuno/comida/cena y valores por defecto de los avisos.
+  de desayuno/comida/cena, token privado del feed iCal y valores por defecto de
+  los avisos.
 - `md_groups`, `md_group_members`, `md_group_invites`: colaboración e
   invitaciones.
 - `md_daily_options`: condiciones diarias configurables por el propietario.
