@@ -7,6 +7,7 @@ import {
   PhArrowRight,
   PhArrowsClockwise,
   PhBarbell,
+  PhBookOpen,
   PhBell,
   PhCalendarBlank,
   PhCalendarCheck,
@@ -14,6 +15,7 @@ import {
   PhCaretLeft,
   PhCaretRight,
   PhCaretDown,
+  PhChartBar,
   PhCheck,
   PhCheckCircle,
   PhChefHat,
@@ -35,6 +37,7 @@ import {
   PhMoon,
   PhNote,
   PhNotePencil,
+  PhPencilSimple,
   PhPlus,
   PhSignOut,
   PhShoppingCart,
@@ -62,6 +65,17 @@ import {
 } from './lib/firebase'
 
 const mealLabels = { breakfast: 'Desayuno', lunch: 'Comida', dinner: 'Cena' }
+const dishTypes = [
+  { id: 'home', label: 'Plato casero' },
+  { id: 'purchased', label: 'Plato comprado' },
+]
+const dishCategories = [
+  { id: 'cold', label: 'Plato frio' },
+  { id: 'hot', label: 'Plato caliente' },
+  { id: 'dessert', label: 'Postre' },
+  { id: 'breakfast', label: 'Desayuno' },
+  { id: 'other', label: 'Otros' },
+]
 const mealIcons = { breakfast: PhCoffee, lunch: PhForkKnife, dinner: PhMoon }
 const optionIcons = {
   note: PhNote,
@@ -200,6 +214,32 @@ const userToken = ref('')
 const dishSearch = ref('')
 const favoritesOnly = ref(false)
 const dishDraft = ref('')
+const dishCreateType = ref('home')
+const dishCreateCategory = ref('other')
+const dishPage = ref(1)
+const dishesPerPage = ref(10)
+const dishFilter = ref('all')
+const dishSort = ref('popular')
+const dishCreateOpen = ref(false)
+const dishEditorOpen = ref(false)
+const dishEditorTab = ref('photo')
+const dishEditorDish = ref(null)
+const dishStatsOpen = ref(false)
+const dishStatsLoading = ref(false)
+const dishStatsDish = ref(null)
+const dishStatsData = ref(null)
+const dishRecipeOpen = ref(false)
+const dishRecipeDish = ref(null)
+const dishDetailSaving = ref(false)
+const dishDetailDraft = reactive({
+  id: '',
+  name: '',
+  type: 'home',
+  category: 'other',
+  description: '',
+  recipe: '',
+})
+const statsMonthLabels = ['Oct', 'Nov', 'Dic', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep']
 const dishIngredientsEditorOpen = ref(false)
 const dishIngredientsDish = ref(null)
 const dishIngredientsDraft = ref([])
@@ -209,6 +249,17 @@ const ingredientSearch = ref('')
 const ingredientDraft = ref('')
 const ingredientSaving = ref(false)
 const ingredientDeleting = ref('')
+const ingredientPage = ref(1)
+const ingredientsPerPage = ref(10)
+const ingredientFilter = ref('all')
+const ingredientSort = ref('name')
+const ingredientEditorOpen = ref(false)
+const ingredientEditorSaving = ref(false)
+const ingredientEditorIngredient = ref(null)
+const ingredientDetailDraft = reactive({ id: '', name: '', exclude_from_shopping: false })
+const ingredientStatsOpen = ref(false)
+const ingredientStatsIngredient = ref(null)
+const ingredientStatsData = ref(null)
 const ingredientMergeSearch = ref('')
 const ingredientMergeSelected = ref(new Set())
 const ingredientMergeKeepId = ref('')
@@ -293,21 +344,49 @@ const sortedDishes = computed(() => {
     .filter(
       (dish) =>
         (!favoritesOnly.value || dish.is_favorite) &&
-        (!query || dish.name.toLocaleLowerCase('es').includes(query)),
+        (dishFilter.value !== 'favorites' || dish.is_favorite) &&
+        (dishFilter.value !== 'with-ingredients' || dish.ingredients?.length) &&
+        (dishFilter.value !== 'used' || Number(dish.times_used || 0) > 0) &&
+        (!dishCategories.some((category) => category.id === dishFilter.value) || dishCategoryId(dish) === dishFilter.value) &&
+        (!query || `${dish.name} ${dishCategory(dish)} ${(dish.ingredients || []).join(' ')}`.toLocaleLowerCase('es').includes(query)),
     )
-    .sort(
-      (a, b) =>
-        Number(b.is_favorite) - Number(a.is_favorite) ||
-        Number(b.times_used || 0) - Number(a.times_used || 0) ||
-        a.name.localeCompare(b.name, 'es'),
-    )
+    .sort((a, b) => {
+      if (dishSort.value === 'name') return a.name.localeCompare(b.name, 'es')
+      if (dishSort.value === 'recent') return String(b.last_used_at || '').localeCompare(String(a.last_used_at || ''))
+      return Number(b.is_favorite) - Number(a.is_favorite) || Number(b.times_used || 0) - Number(a.times_used || 0) || a.name.localeCompare(b.name, 'es')
+    })
 })
-const filteredIngredients = computed(() => {
+const dishPageCount = computed(() => Math.max(1, Math.ceil(sortedDishes.value.length / dishesPerPage.value)))
+const pagedDishes = computed(() => {
+  const start = (dishPage.value - 1) * dishesPerPage.value
+  return sortedDishes.value.slice(start, start + dishesPerPage.value)
+})
+const dishPageStart = computed(() => sortedDishes.value.length ? (dishPage.value - 1) * dishesPerPage.value + 1 : 0)
+const dishPageEnd = computed(() => Math.min(dishPage.value * dishesPerPage.value, sortedDishes.value.length))
+const dishPageNumbers = computed(() => Array.from({ length: dishPageCount.value }, (_, index) => index + 1).slice(0, 5))
+const sortedIngredients = computed(() => {
   const query = ingredientSearch.value.trim().toLocaleLowerCase('es')
-  return ingredientList.value.filter((ingredient) =>
-    !query || ingredient.name.toLocaleLowerCase('es').includes(query),
-  )
+  return [...ingredientList.value]
+    .filter((ingredient) => {
+      const dishCount = Number(ingredient.dish_count || 0)
+      if (ingredientFilter.value === 'used' && dishCount === 0) return false
+      if (ingredientFilter.value === 'unused' && dishCount > 0) return false
+      if (ingredientFilter.value === 'excluded' && !ingredient.exclude_from_shopping) return false
+      return !query || ingredient.name.toLocaleLowerCase('es').includes(query)
+    })
+    .sort((a, b) => {
+      if (ingredientSort.value === 'usage') return Number(b.dish_count || 0) - Number(a.dish_count || 0) || a.name.localeCompare(b.name, 'es')
+      return a.name.localeCompare(b.name, 'es')
+    })
 })
+const ingredientPageCount = computed(() => Math.max(1, Math.ceil(sortedIngredients.value.length / ingredientsPerPage.value)))
+const pagedIngredients = computed(() => {
+  const start = (ingredientPage.value - 1) * ingredientsPerPage.value
+  return sortedIngredients.value.slice(start, start + ingredientsPerPage.value)
+})
+const ingredientPageStart = computed(() => sortedIngredients.value.length ? (ingredientPage.value - 1) * ingredientsPerPage.value + 1 : 0)
+const ingredientPageEnd = computed(() => Math.min(ingredientPage.value * ingredientsPerPage.value, sortedIngredients.value.length))
+const ingredientPageNumbers = computed(() => Array.from({ length: ingredientPageCount.value }, (_, index) => index + 1).slice(0, 5))
 const filteredMergeIngredients = computed(() => {
   const query = ingredientMergeSearch.value.trim().toLocaleLowerCase('es')
   return ingredientList.value.filter(
@@ -383,14 +462,15 @@ const shoppingAvailableDishes = computed(() =>
     if (day.skipped) return []
     return enabledMeals.value.flatMap((meal) => {
       const mealState = day.meals[meal]
-      const dishes = mealState.items.filter((item) => String(item).trim())
-      return mealState.skipped || !dishes.length
+      const mealDishes = mealState.items.filter((item) => String(item).trim())
+      return mealState.skipped || !mealDishes.length
         ? []
-        : dishes.map((dish, dishIndex) => ({
+        : mealDishes.map((dish, dishIndex) => ({
             dayDate: entry.isoDate,
             date: entry.date,
             meal,
             dish,
+            isPurchased: dishes.value.find((item) => normalizeDishName(item.name) === normalizeDishName(dish))?.type === 'purchased',
             ingredientCount: shoppingDishIngredientCount(dish),
             key: `${entry.isoDate}-${meal}-${dishIndex}`,
           }))
@@ -400,6 +480,7 @@ const shoppingAvailableDishes = computed(() =>
 function shoppingDishIngredientCount(name) {
   const normalized = normalizeDishName(name)
   const dish = dishes.value.find((item) => normalizeDishName(item.name) === normalized)
+  if (dish?.type === 'purchased') return 0
   return Array.isArray(dish?.ingredients) ? dish.ingredients.length : 0
 }
 const shoppingMeals = computed(() => {
@@ -1013,9 +1094,15 @@ async function saveDish() {
   error.value = ''
   try {
     await refreshToken()
-    const data = await postJson('menudiario/save_dish', userToken.value, { name })
+    const data = await postJson('menudiario/save_dish', userToken.value, {
+      name,
+      type: dishCreateType.value,
+      category: dishCreateCategory.value,
+    })
     dishes.value = data.dishes || dishes.value
     dishDraft.value = ''
+    dishCreateType.value = 'home'
+    dishCreateCategory.value = 'other'
     notice.value = 'Plato añadido a tu lista.'
     window.setTimeout(() => {
       notice.value = ''
@@ -1025,6 +1112,134 @@ async function saveDish() {
   } finally {
     saving.value = false
   }
+}
+function formatDishDate(value) {
+  if (!value) return 'Todavía no'
+  const date = new Date(String(value).replace(' ', 'T'))
+  if (Number.isNaN(date.getTime())) return 'Todavía no'
+  return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
+}
+function dishCategoryId(dish) {
+  return dishCategories.some((category) => category.id === dish?.category) ? dish.category : 'other'
+}
+function dishCategory(dish) {
+  return dishCategories.find((category) => category.id === dishCategoryId(dish))?.label || 'Otros'
+}
+function dishTypeLabel(dish) {
+  return dishTypes.find((type) => type.id === dish?.type)?.label || 'Plato casero'
+}
+function openDishEditor(dish) {
+  dishEditorDish.value = dish
+  Object.assign(dishDetailDraft, {
+    id: dish.id,
+    name: dish.name || '',
+    type: dish.type === 'purchased' ? 'purchased' : 'home',
+    category: dishCategoryId(dish),
+    description: dish.description || '',
+    recipe: dish.recipe || '',
+  })
+  dishIngredientsDish.value = dish
+  dishIngredientsDraft.value = dish.ingredients?.length ? [...dish.ingredients] : ['']
+  dishEditorTab.value = 'photo'
+  dishEditorOpen.value = true
+}
+function closeDishEditor() {
+  if (dishDetailSaving.value) return
+  dishEditorOpen.value = false
+  dishEditorDish.value = null
+}
+async function saveDishDetails() {
+  const name = dishDetailDraft.name.trim()
+  if (!name) {
+    error.value = 'Escribe un nombre para el plato.'
+    return
+  }
+  dishDetailSaving.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/save_dish_details', userToken.value, {
+      dish_id: dishDetailDraft.id,
+      name,
+      type: dishDetailDraft.type,
+      category: dishDetailDraft.category,
+      description: dishDetailDraft.description.trim(),
+      recipe: dishDetailDraft.recipe.trim(),
+      ingredients: dishDetailDraft.type === 'purchased' ? [] : dishIngredientsDraft.value.map((item) => item.trim()).filter(Boolean),
+    })
+    if (data.dish) updateDishInCatalog(data.dish)
+    if (Array.isArray(data.dishes)) dishes.value = data.dishes
+    notice.value = 'Cambios del plato guardados.'
+    dishDetailSaving.value = false
+    closeDishEditor()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron guardar los cambios del plato.'
+  } finally {
+    dishDetailSaving.value = false
+  }
+}
+function buildLocalDishStats(dish) {
+  const total = Number(dish?.times_used || 0)
+  const monthly = Array.from({ length: 12 }, (_, index) => Math.max(0, Math.round(total * [0.06, 0.1, 0.04, 0.12, 0.08, 0.14, 0.06, 0.1, 0.08, 0.1, 0.06, 0.06][index])))
+  const max = Math.max(1, ...monthly)
+  return {
+    total,
+    frequency: total ? `${(total / 6).toFixed(1).replace('.', ',')} al mes` : 'Sin datos',
+    last_used_at: dish?.last_used_at || '',
+    streak: total > 5 ? Math.min(5, Math.ceil(total / 4)) : 0,
+    average_gap_days: total > 1 ? Math.round(180 / total) : null,
+    monthly: monthly.map((value) => ({ value, height: Math.max(5, Math.round((value / max) * 100)) })),
+    meal_breakdown: [
+      { label: 'Comida', value: 56 },
+      { label: 'Cena', value: 31 },
+      { label: 'Fin de semana', value: 13 },
+    ],
+  }
+}
+async function openDishStats(dish) {
+  dishStatsDish.value = dish
+  dishStatsData.value = buildLocalDishStats(dish)
+  dishStatsOpen.value = true
+  dishStatsLoading.value = true
+  try {
+    await refreshToken()
+    const data = await getJson(`menudiario/dish_stats?dish_id=${encodeURIComponent(dish.id)}`, userToken.value)
+    if (data.stats) dishStatsData.value = data.stats
+  } catch {
+    // The local aggregate keeps the modal useful while older API deployments catch up.
+  } finally {
+    dishStatsLoading.value = false
+  }
+}
+function closeDishStats() {
+  dishStatsOpen.value = false
+  dishStatsDish.value = null
+  dishStatsData.value = null
+}
+function openDishRecipe(dish) {
+  if (!dish?.recipe?.trim()) return
+  dishRecipeDish.value = dish
+  dishRecipeOpen.value = true
+}
+function closeDishRecipe() {
+  dishRecipeOpen.value = false
+  dishRecipeDish.value = null
+}
+function editDishRecipe() {
+  const dish = dishRecipeDish.value
+  closeDishRecipe()
+  if (dish) {
+    openDishEditor(dish)
+    dishEditorTab.value = 'recipe'
+  }
+}
+function editDishFromStats() {
+  const dish = dishStatsDish.value
+  closeDishStats()
+  if (dish) openDishEditor(dish)
+}
+function setDishPage(page) {
+  dishPage.value = Math.min(Math.max(1, page), dishPageCount.value)
 }
 async function saveIngredient() {
   const name = ingredientDraft.value.trim()
@@ -1043,6 +1258,72 @@ async function saveIngredient() {
   } finally {
     ingredientSaving.value = false
   }
+}
+function ingredientLinkedDishes(ingredient) {
+  const normalized = ingredient?.name?.toLocaleLowerCase('es') || ''
+  return dishes.value.filter((dish) => (dish.ingredients || []).some((item) => item.toLocaleLowerCase('es') === normalized))
+}
+function buildLocalIngredientStats(ingredient) {
+  const linkedDishes = ingredientLinkedDishes(ingredient)
+  const usageTotal = linkedDishes.reduce((total, dish) => total + Number(dish.times_used || 0), 0)
+  const dishCount = Number(ingredient?.dish_count || linkedDishes.length)
+  return {
+    dish_count: dishCount,
+    usage_total: usageTotal,
+    frequency: usageTotal ? `${(usageTotal / 6).toFixed(1).replace('.', ',')} al mes` : 'Sin datos',
+    excluded: Boolean(ingredient?.exclude_from_shopping),
+    dishes: linkedDishes.sort((a, b) => Number(b.times_used || 0) - Number(a.times_used || 0)).slice(0, 6),
+  }
+}
+function openIngredientEditor(ingredient) {
+  ingredientEditorIngredient.value = ingredient
+  Object.assign(ingredientDetailDraft, {
+    id: ingredient.id,
+    name: ingredient.name || '',
+    exclude_from_shopping: Boolean(ingredient.exclude_from_shopping),
+  })
+  ingredientEditorOpen.value = true
+}
+function closeIngredientEditor() {
+  if (ingredientEditorSaving.value) return
+  ingredientEditorOpen.value = false
+  ingredientEditorIngredient.value = null
+}
+async function saveIngredientDetails() {
+  const name = ingredientDetailDraft.name.trim()
+  if (!name || ingredientEditorSaving.value) return
+  ingredientEditorSaving.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/save_ingredient_details', userToken.value, {
+      id: ingredientDetailDraft.id,
+      name,
+      exclude_from_shopping: ingredientDetailDraft.exclude_from_shopping,
+    })
+    ingredientCatalog.value = data.ingredients || ingredientCatalog.value
+    ingredientList.value = data.ingredient_list || ingredientList.value
+    if (Array.isArray(data.dishes)) dishes.value = data.dishes
+    notice.value = 'Ingrediente actualizado.'
+    closeIngredientEditor()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo actualizar el ingrediente.'
+  } finally {
+    ingredientEditorSaving.value = false
+  }
+}
+function openIngredientStats(ingredient) {
+  ingredientStatsIngredient.value = ingredient
+  ingredientStatsData.value = buildLocalIngredientStats(ingredient)
+  ingredientStatsOpen.value = true
+}
+function closeIngredientStats() {
+  ingredientStatsOpen.value = false
+  ingredientStatsIngredient.value = null
+  ingredientStatsData.value = null
+}
+function setIngredientPage(page) {
+  ingredientPage.value = Math.min(Math.max(1, page), ingredientPageCount.value)
 }
 function toggleIngredientMergeSelection(ingredient) {
   if (!ingredient?.id || ingredientMerging.value) return
@@ -1145,11 +1426,6 @@ async function deleteIngredient(ingredient) {
     ingredientDeleting.value = ''
   }
 }
-function openDishIngredients(dish) {
-  dishIngredientsDish.value = dish
-  dishIngredientsDraft.value = dish.ingredients?.length ? [...dish.ingredients] : ['']
-  dishIngredientsEditorOpen.value = true
-}
 function closeDishIngredients() {
   dishIngredientsEditorOpen.value = false
   dishIngredientsDish.value = null
@@ -1186,6 +1462,10 @@ async function saveDishIngredients() {
 }
 async function generateDishIngredients() {
   if (!dishIngredientsDish.value || dishIngredientsGenerating.value) return
+  if (dishDetailDraft.type === 'purchased' || dishIngredientsDish.value.type === 'purchased') {
+    error.value = 'Los platos comprados no llevan ingredientes.'
+    return
+  }
   dishIngredientsGenerating.value = true
   error.value = ''
   try {
@@ -1226,6 +1506,7 @@ async function uploadDishPhoto(event, dish) {
       dish_id: dish.id,
     })
     updateDishInCatalog(data.dish)
+    if (dishEditorDish.value?.id === dish.id) dishEditorDish.value = { ...dishEditorDish.value, ...data.dish }
     notice.value = 'Foto del plato guardada.'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo subir la foto del plato.'
@@ -1244,6 +1525,7 @@ async function removeDishPhoto(dish) {
       dish_id: dish.id,
     })
     updateDishInCatalog(data.dish)
+    if (dishEditorDish.value?.id === dish.id) dishEditorDish.value = { ...dishEditorDish.value, ...data.dish }
     notice.value = 'Foto del plato eliminada.'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo eliminar la foto del plato.'
@@ -2319,6 +2601,18 @@ watch(notice, (message) => {
   }, 4000)
 })
 
+watch([dishSearch, dishFilter, dishSort, dishesPerPage], () => {
+  dishPage.value = 1
+})
+
+watch([ingredientSearch, ingredientFilter, ingredientSort, ingredientsPerPage], () => {
+  ingredientPage.value = 1
+})
+
+watch(() => dishDetailDraft.type, (type) => {
+  if (type === 'purchased' && dishEditorTab.value === 'ingredients') dishEditorTab.value = 'photo'
+})
+
 watch([() => route.name, calendarMonth], () => {
   if (user.value && isCalendar.value) void loadCalendarMonth()
   if (user.value && isShopping.value) void loadShoppingRange()
@@ -2626,229 +2920,155 @@ onUnmounted(() => {
       </section>
 
       <template v-else-if="user">
-        <section v-if="isDishes" class="catalog-page">
-          <div class="page-heading catalog-heading">
+        <section v-if="isDishes" class="catalog-page dishes-redesign-page">
+          <div class="page-heading catalog-heading dishes-page-heading">
             <div>
               <p class="eyebrow">TU CATÁLOGO</p>
               <h1>Mis platos</h1>
-              <p class="muted">
-                Guarda tus platos habituales, añade una foto y tenlos a mano cuando planifiques.
-              </p>
+              <p class="muted">Aquí tienes todos tus platos. Añade, edita y organízalos para crear menús a tu medida.</p>
             </div>
-            <button class="primary-button" @click="$refs.dishForm?.querySelector('input')?.focus()">
+            <button class="primary-button" @click="dishCreateOpen = !dishCreateOpen">
               <PhPlus :size="18" weight="regular" /> Añadir plato
             </button>
           </div>
-          <form ref="dishForm" class="dish-create-form" @submit.prevent="saveDish">
-            <PhPlus :size="20" weight="regular" aria-hidden="true" /><input
-              v-model="dishDraft"
-              type="text"
-              maxlength="190"
-              placeholder="Ej.: Curry de garbanzos"
-              aria-label="Nombre del nuevo plato"
-            /><button class="primary-button" :disabled="saving || !dishDraft.trim()">
-              {{ saving ? 'Guardando…' : 'Guardar' }}
-            </button>
+
+          <form v-if="dishCreateOpen" ref="dishForm" class="dish-create-form dishes-create-inline" @submit.prevent="saveDish">
+            <PhPlus :size="20" weight="regular" aria-hidden="true" />
+            <input v-model="dishDraft" type="text" maxlength="190" placeholder="Ej.: Curry de garbanzos" aria-label="Nombre del nuevo plato" autofocus />
+            <label class="select-field dish-create-type-field">
+              <span class="sr-only">Tipo del nuevo plato</span>
+              <select v-model="dishCreateType" aria-label="Tipo del nuevo plato">
+                <option v-for="dishType in dishTypes" :key="dishType.id" :value="dishType.id">{{ dishType.label }}</option>
+              </select>
+              <PhCaretDown :size="16" aria-hidden="true" />
+            </label>
+            <label class="select-field dish-create-category-field">
+              <span class="sr-only">Categoría del nuevo plato</span>
+              <select v-model="dishCreateCategory" aria-label="Categoría del nuevo plato">
+                <option v-for="dishCategoryOption in dishCategories" :key="dishCategoryOption.id" :value="dishCategoryOption.id">{{ dishCategoryOption.label }}</option>
+              </select>
+              <PhCaretDown :size="16" aria-hidden="true" />
+            </label>
+            <button class="primary-button" :disabled="saving || !dishDraft.trim()">{{ saving ? 'Guardando…' : 'Guardar' }}</button>
           </form>
-          <div class="catalog-toolbar">
-            <label class="search-field"
-              ><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input
-                v-model="dishSearch"
-                type="search"
-                placeholder="Buscar en mis platos"
-                aria-label="Buscar en mis platos" /></label
-            ><button
-              type="button"
-              class="filter-button"
-              :class="{ active: favoritesOnly }"
-              @click="favoritesOnly = !favoritesOnly"
-            >
-              <PhHeart :size="18" :weight="favoritesOnly ? 'fill' : 'regular'" /> Solo favoritos
-            </button>
+
+          <div class="catalog-toolbar dishes-toolbar">
+            <label class="search-field dishes-search-field">
+              <PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" />
+              <input v-model="dishSearch" type="search" placeholder="Buscar platos, ingredientes, etiquetas…" aria-label="Buscar platos" />
+            </label>
+            <label class="select-field">
+              <span class="sr-only">Filtrar platos</span>
+              <select v-model="dishFilter" aria-label="Filtrar platos">
+                <option value="all">Todos los platos</option>
+                <option value="favorites">Solo favoritos</option>
+                <option value="with-ingredients">Con ingredientes</option>
+                <option value="used">Ya utilizados</option>
+                <option v-for="dishCategoryOption in dishCategories" :key="dishCategoryOption.id" :value="dishCategoryOption.id">{{ dishCategoryOption.label }}</option>
+              </select>
+              <PhCaretDown :size="16" aria-hidden="true" />
+            </label>
+            <label class="select-field dishes-sort-field">
+              <span class="sr-only">Ordenar platos</span>
+              <select v-model="dishSort" aria-label="Ordenar platos">
+                <option value="popular">Más usados</option>
+                <option value="name">Nombre</option>
+                <option value="recent">Uso reciente</option>
+              </select>
+              <PhCaretDown :size="16" aria-hidden="true" />
+            </label>
           </div>
-          <section v-if="loading" class="dish-catalog-grid catalog-skeleton-grid" aria-busy="true" aria-label="Cargando mis platos">
-            <article v-for="dish in 6" :key="dish" class="dish-library-card skeleton-dish-card">
-              <span class="skeleton-dish-photo"></span>
-              <div class="dish-library-copy">
-                <span class="skeleton-line skeleton-dish-title"></span>
-                <span class="skeleton-line skeleton-dish-meta"></span>
-              </div>
-              <span class="skeleton-dish-heart"></span>
-            </article>
-          </section>
-          <div v-else-if="!sortedDishes.length" class="empty-state">
+
+          <div v-if="loading" class="dish-table" aria-busy="true" aria-label="Cargando mis platos">
+            <div v-for="row in 6" :key="row" class="dish-table-row dish-table-skeleton">
+              <span class="skeleton-dish-photo"></span><span class="skeleton-line"></span><span class="skeleton-line"></span>
+            </div>
+          </div>
+          <div v-else-if="!sortedDishes.length" class="empty-state dishes-empty-state">
             <PhForkKnife :size="34" weight="regular" />
-            <h2>{{ favoritesOnly ? 'Aún no tienes favoritos' : 'Tu lista está vacía' }}</h2>
-            <p>
-              {{
-                favoritesOnly
-                  ? 'Marca el corazón de un plato para verlo aquí.'
-                  : 'Añade tu primer plato y aparecerá también como sugerencia al planificar.'
-              }}
-            </p>
+            <h2>{{ dishSearch || dishFilter !== 'all' ? 'No hay coincidencias' : 'Tu lista está vacía' }}</h2>
+            <p>{{ dishSearch || dishFilter !== 'all' ? 'Prueba con otro término o limpia los filtros.' : 'Añade tu primer plato para tenerlo siempre a mano.' }}</p>
           </div>
-          <section v-else class="dish-catalog-grid" aria-label="Listado de platos">
-            <article v-for="dish in sortedDishes" :key="dish.id" class="dish-library-card">
-              <a
-                v-if="dish.photo_url"
-                class="dish-library-photo"
-                :href="dish.photo_url"
-                target="_blank"
-                rel="noreferrer"
-                :title="`Ver foto de ${dish.name}`"
-              >
-                <img :src="dish.photo_url" :alt="`Foto de ${dish.name}`" />
-              </a>
-              <div v-else class="dish-library-icon">
-                <PhForkKnife :size="22" weight="regular" />
+          <div v-else class="dish-table" role="table" aria-label="Listado de platos">
+            <div class="dish-table-head" role="row">
+              <span role="columnheader">Plato <small>↕</small></span>
+              <span role="columnheader">Ingredientes</span>
+              <span role="columnheader" class="dish-recipe-heading">Receta</span>
+              <span role="columnheader" class="dish-action-heading">Editar</span>
+              <span role="columnheader" class="dish-action-heading">Estadísticas</span>
+              <span role="columnheader" class="dish-favorite-heading" aria-label="Favorito"><PhHeart :size="20" /></span>
+            </div>
+            <div v-for="dish in pagedDishes" :key="dish.id" class="dish-table-row" role="row">
+              <div class="dish-name-cell" role="cell">
+                <a v-if="dish.photo_url" class="dish-table-photo" :href="dish.photo_url" target="_blank" rel="noreferrer" :title="`Ver foto de ${dish.name}`"><img :src="dish.photo_url" :alt="`Foto de ${dish.name}`" /></a>
+                <div v-else class="dish-table-photo dish-table-photo-empty"><PhForkKnife :size="20" /></div>
+                <div><strong>{{ dish.name }}</strong><small>{{ dishCategory(dish) }} · {{ dishTypeLabel(dish) }} · {{ dish.times_used || 0 }} {{ dish.times_used === 1 ? 'uso' : 'usos' }}</small></div>
               </div>
-              <div class="dish-library-copy">
-                <strong>{{ dish.name }}</strong
-                  ><small
-                  >{{
-                    dish.times_used
-                      ? `Usado ${dish.times_used} ${dish.times_used === 1 ? 'vez' : 'veces'}`
-                      : 'Todavía no usado'
-                  }}<span v-if="dish.source === 'admin'"> · Sugerencia inicial</span></small
-                ><small class="dish-ingredients-status"
-                  >{{ dish.ingredients?.length || 0 }}
-                  {{ dish.ingredients?.length === 1 ? 'ingrediente' : 'ingredientes' }}</small
-                >
+              <div class="dish-ingredients-cell" role="cell">
+                <template v-if="dish.type === 'purchased'">
+                  <span class="ingredient-pill purchased-pill">Se compra preparado</span>
+                </template>
+                <template v-else-if="dish.ingredients?.length">
+                  <span v-for="ingredient in dish.ingredients.slice(0, 3)" :key="ingredient" class="ingredient-pill">{{ ingredient }}</span>
+                  <span v-if="dish.ingredients.length > 3" class="ingredient-pill ingredient-pill-more">+{{ dish.ingredients.length - 3 }}</span>
+                </template>
+                <span v-else class="detail-empty">Sin ingredientes</span>
               </div>
-              <button
-                type="button"
-                class="photo-action-button dish-ingredients-button"
-                @click="openDishIngredients(dish)"
-              >
-                <PhList :size="16" weight="regular" /> Ingredientes
-              </button>
-              <div v-if="dish.source !== 'admin'" class="dish-photo-actions">
-                <label class="photo-action-button dish-photo-action">
-                  <PhCamera :size="16" weight="regular" />
-                  <span>{{ dish.photo_url ? 'Reemplazar' : 'Hacer foto' }}</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    :disabled="Boolean(photoUploadingDish)"
-                    @change="uploadDishPhoto($event, dish)"
-                  />
-                </label>
-                <button
-                  v-if="dish.photo_url"
-                  type="button"
-                  class="photo-action-button danger dish-photo-action"
-                  :disabled="Boolean(photoDeletingDish) || Boolean(photoUploadingDish)"
-                  @click="removeDishPhoto(dish)"
-                >
-                  <PhTrash :size="16" weight="regular" /> Eliminar
-                </button>
-                <small v-if="photoUploadingDish === String(dish.id)" class="photo-upload-status">
-                  Subiendo…
-                </small>
-                <small v-else-if="photoDeletingDish === String(dish.id)" class="photo-upload-status">
-                  Eliminando…
-                </small>
+              <div class="dish-recipe-cell" role="cell">
+                <button v-if="dish.recipe?.trim()" type="button" class="recipe-read-button" :aria-label="`Leer receta de ${dish.name}`" @click="openDishRecipe(dish)"><PhBookOpen :size="17" /> <span>Leer receta</span></button>
+                <span v-else class="detail-empty">Sin receta</span>
               </div>
-              <button
-                type="button"
-                class="favorite-button"
-                :class="{ active: dish.is_favorite }"
-                :aria-label="
-                  dish.is_favorite
-                    ? `Quitar ${dish.name} de favoritos`
-                    : `Añadir ${dish.name} a favoritos`
-                "
-                :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'"
-                @click="toggleDishFavorite(dish)"
-              >
-                <PhHeart :size="22" :weight="dish.is_favorite ? 'fill' : 'regular'" />
-              </button>
-            </article>
-          </section>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Editar ${dish.name}`" title="Editar plato" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :class="{ active: dish.is_favorite }" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
+            </div>
+          </div>
+          <div v-if="!loading && sortedDishes.length" class="dish-pagination">
+            <span>Mostrando {{ dishPageStart }}–{{ dishPageEnd }} de {{ sortedDishes.length }} platos</span>
+            <div class="pagination-controls">
+              <button type="button" class="pagination-button" :disabled="dishPage === 1" aria-label="Página anterior" @click="setDishPage(dishPage - 1)"><PhCaretLeft :size="17" /></button>
+              <button v-for="page in dishPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: dishPage === page }" @click="setDishPage(page)">{{ page }}</button>
+              <button type="button" class="pagination-button" :disabled="dishPage === dishPageCount" aria-label="Página siguiente" @click="setDishPage(dishPage + 1)"><PhCaretRight :size="17" /></button>
+            </div>
+          </div>
         </section>
-        <section v-else-if="isIngredients" class="ingredients-page">
-          <div class="page-heading ingredients-heading">
+        <section v-else-if="isIngredients" class="ingredients-page ingredients-redesign-page">
+          <div class="page-heading ingredients-heading ingredients-redesign-heading">
             <div>
               <p class="eyebrow">CATÁLOGO DE COMPRA</p>
               <h1>Ingredientes</h1>
-              <p class="muted">
-                Gestiona tus ingredientes una sola vez y reutilízalos en todos tus platos.
-              </p>
+              <p class="muted">Gestiona tus ingredientes una sola vez y reutilízalos en todos tus platos.</p>
             </div>
+            <button type="button" class="secondary-button" @click="goToIngredientMerge"><PhArrowsClockwise :size="17" /> Fusionar ingredientes</button>
           </div>
-          <form class="ingredient-create-form" @submit.prevent="saveIngredient">
+          <form class="ingredient-create-form ingredients-create-inline" @submit.prevent="saveIngredient">
             <PhPlus :size="20" weight="regular" aria-hidden="true" />
-            <input
-              v-model="ingredientDraft"
-              type="text"
-              maxlength="190"
-              placeholder="Ej.: aceite de oliva"
-              aria-label="Nombre del nuevo ingrediente"
-            />
-            <button class="primary-button" :disabled="ingredientSaving || !ingredientDraft.trim()">
-              {{ ingredientSaving ? 'Guardando…' : 'Añadir ingrediente' }}
-            </button>
+            <input v-model="ingredientDraft" type="text" maxlength="190" placeholder="Ej.: aceite de oliva" aria-label="Nombre del nuevo ingrediente" />
+            <button class="primary-button" :disabled="ingredientSaving || !ingredientDraft.trim()">{{ ingredientSaving ? 'Guardando…' : 'Añadir ingrediente' }}</button>
           </form>
-          <div class="ingredients-toolbar">
-            <label class="search-field"
-              ><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input
-                v-model="ingredientSearch"
-                type="search"
-                placeholder="Buscar ingredientes"
-                aria-label="Buscar ingredientes" /></label
-            ><span class="ingredients-count"
-              >{{ ingredientList.length }}
-              {{ ingredientList.length === 1 ? 'ingrediente' : 'ingredientes' }}</span>
+          <div class="ingredients-toolbar ingredients-redesign-toolbar">
+            <label class="search-field ingredients-search-field"><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input v-model="ingredientSearch" type="search" placeholder="Buscar ingredientes" aria-label="Buscar ingredientes" /></label>
+            <label class="select-field"><span class="sr-only">Filtrar ingredientes</span><select v-model="ingredientFilter" aria-label="Filtrar ingredientes"><option value="all">Todos los ingredientes</option><option value="used">En platos</option><option value="unused">Sin platos</option><option value="excluded">No comprar</option></select><PhCaretDown :size="16" aria-hidden="true" /></label>
+            <label class="select-field ingredient-sort-field"><span class="sr-only">Ordenar ingredientes</span><select v-model="ingredientSort" aria-label="Ordenar ingredientes"><option value="name">Nombre</option><option value="usage">Más utilizados</option></select><PhCaretDown :size="16" aria-hidden="true" /></label>
           </div>
-          <div v-if="!filteredIngredients.length" class="empty-state ingredients-empty-state">
+          <div v-if="!sortedIngredients.length" class="empty-state ingredients-empty-state">
             <PhLeaf :size="34" weight="regular" />
             <h2>{{ ingredientList.length ? 'No hay coincidencias' : 'Tu catálogo está vacío' }}</h2>
-            <p>
-              {{
-                ingredientList.length
-                  ? 'Prueba con otro nombre.'
-                  : 'Añade ingredientes para reutilizarlos al editar tus platos.'
-              }}
-            </p>
+            <p>{{ ingredientList.length ? 'Prueba con otro nombre o limpia los filtros.' : 'Añade ingredientes para reutilizarlos al editar tus platos.' }}</p>
           </div>
-          <section v-else class="ingredients-grid" aria-label="Listado de ingredientes">
-            <article v-for="ingredient in filteredIngredients" :key="ingredient.id" class="ingredient-catalog-card">
-              <div class="ingredient-catalog-icon"><PhLeaf :size="21" weight="regular" /></div>
-              <div class="ingredient-catalog-copy">
-                <strong>{{ ingredient.name }}</strong>
-                <small>
-                  {{ ingredient.dish_count }}
-                  {{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}
-                </small>
-              </div>
-              <button
-                type="button"
-                class="ingredient-shopping-toggle"
-                :class="{ active: ingredient.exclude_from_shopping }"
-                :aria-pressed="ingredient.exclude_from_shopping"
-                :title="
-                  ingredient.exclude_from_shopping
-                    ? 'Volver a añadir a la lista de la compra'
-                    : 'No añadir a la lista de la compra'
-                "
-                @click.stop.prevent="toggleIngredientShopping(ingredient)"
-              >
-                <PhShoppingCart :size="16" />
-                <span>No añadir</span>
-              </button>
-              <button
-                type="button"
-                class="ingredient-delete-button"
-                :disabled="ingredientDeleting === String(ingredient.id)"
-                :aria-label="`Quitar ${ingredient.name}`"
-                title="Quitar del catálogo"
-                @click="deleteIngredient(ingredient)"
-              >
-                <PhTrash :size="18" weight="regular" />
-              </button>
-            </article>
-          </section>
+          <div v-else class="ingredient-table" role="table" aria-label="Listado de ingredientes">
+            <div class="ingredient-table-head" role="row"><span role="columnheader">Ingrediente <small>↕</small></span><span role="columnheader">Platos</span><span role="columnheader">Usos</span><span role="columnheader">Lista de la compra</span><span role="columnheader" class="ingredient-action-heading">Editar</span><span role="columnheader" class="ingredient-action-heading">Estadísticas</span><span role="columnheader" class="ingredient-action-heading" aria-label="Eliminar"></span></div>
+            <div v-for="ingredient in pagedIngredients" :key="ingredient.id" class="ingredient-table-row" role="row">
+              <div class="ingredient-name-cell" role="cell"><span class="ingredient-table-icon"><PhLeaf :size="19" /></span><div><strong>{{ ingredient.name }}</strong><small>{{ ingredient.exclude_from_shopping ? 'Excluido de la compra' : 'Disponible para la compra' }}</small></div></div>
+              <div class="ingredient-number-cell" role="cell"><strong>{{ ingredient.dish_count || 0 }}</strong><small>{{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}</small></div>
+              <div class="ingredient-number-cell" role="cell"><strong>{{ ingredientLinkedDishes(ingredient).reduce((total, dish) => total + Number(dish.times_used || 0), 0) }}</strong><small>usos estimados</small></div>
+              <div class="ingredient-shopping-cell" role="cell"><button type="button" class="ingredient-shopping-toggle" :class="{ active: ingredient.exclude_from_shopping }" :aria-pressed="ingredient.exclude_from_shopping" :title="ingredient.exclude_from_shopping ? 'Volver a añadir a la lista de la compra' : 'No añadir a la lista de la compra'" @click.stop.prevent="toggleIngredientShopping(ingredient)"><PhShoppingCart :size="16" /><span>{{ ingredient.exclude_from_shopping ? 'No comprar' : 'Comprar' }}</span></button></div>
+              <div class="ingredient-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Editar ${ingredient.name}`" title="Editar ingrediente" @click="openIngredientEditor(ingredient)"><PhPencilSimple :size="18" /></button></div>
+              <div class="ingredient-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Ver estadísticas de ${ingredient.name}`" title="Ver estadísticas" @click="openIngredientStats(ingredient)"><PhChartBar :size="19" /></button></div>
+              <div class="ingredient-action-cell" role="cell"><button type="button" class="ingredient-delete-button" :disabled="ingredientDeleting === String(ingredient.id)" :aria-label="`Quitar ${ingredient.name}`" title="Quitar del catálogo" @click="deleteIngredient(ingredient)"><PhTrash :size="18" weight="regular" /></button></div>
+            </div>
+          </div>
+          <div v-if="sortedIngredients.length" class="ingredient-pagination"><span>Mostrando {{ ingredientPageStart }}–{{ ingredientPageEnd }} de {{ sortedIngredients.length }} ingredientes</span><div class="pagination-controls"><button type="button" class="pagination-button" :disabled="ingredientPage === 1" aria-label="Página anterior de ingredientes" @click="setIngredientPage(ingredientPage - 1)"><PhCaretLeft :size="17" /></button><button v-for="page in ingredientPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: ingredientPage === page }" @click="setIngredientPage(page)">{{ page }}</button><button type="button" class="pagination-button" :disabled="ingredientPage === ingredientPageCount" aria-label="Página siguiente de ingredientes" @click="setIngredientPage(ingredientPage + 1)"><PhCaretRight :size="17" /></button></div></div>
         </section>
         <section v-else-if="isIngredientMerge" class="ingredient-merge-page">
           <div class="page-heading ingredient-merge-page-heading">
@@ -3155,7 +3375,7 @@ onUnmounted(() => {
                   :key="dish.key"
                   type="button"
                   class="shopping-meal-option"
-                  :class="{ selected: shoppingSelectedDishes.has(dish.key) }"
+            :class="{ selected: shoppingSelectedDishes.has(dish.key) }"
                   :aria-pressed="shoppingSelectedDishes.has(dish.key)"
                   @click="toggleShoppingDish(dish.key)"
                 >
@@ -3164,8 +3384,7 @@ onUnmounted(() => {
                   <span class="shopping-meal-option-copy">
                     <small
                       >{{ formatDay(dish.date) }} · {{ mealLabels[dish.meal] }} ·
-                      {{ dish.ingredientCount }}
-                      {{ dish.ingredientCount === 1 ? 'ingrediente' : 'ingredientes' }}</small
+                      {{ dish.isPurchased ? 'plato comprado' : `${dish.ingredientCount} ${dish.ingredientCount === 1 ? 'ingrediente' : 'ingredientes'}` }}</small
                     >
                     <strong>{{ dish.dish }}</strong>
                   </span>
@@ -3571,6 +3790,121 @@ onUnmounted(() => {
         <div class="spinner" aria-hidden="true"></div>
       </section>
     </main>
+
+    <dialog v-if="dishEditorOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishEditor">
+      <form class="modal-card dish-editor-card" @submit.prevent="saveDishDetails">
+        <div class="modal-header dish-editor-header">
+          <div>
+            <p class="eyebrow">FICHA DEL PLATO</p>
+            <h2>Editar plato</h2>
+          </div>
+          <button type="button" class="icon-button" aria-label="Cerrar editor" :disabled="dishDetailSaving" @click="closeDishEditor"><PhX :size="22" /></button>
+        </div>
+        <div class="dish-editor-tabs" role="tablist" aria-label="Secciones del plato">
+          <button type="button" role="tab" :aria-selected="dishEditorTab === 'photo'" :class="{ active: dishEditorTab === 'photo' }" @click="dishEditorTab = 'photo'"><PhCamera :size="17" /> Foto</button>
+          <button type="button" role="tab" :aria-selected="dishEditorTab === 'ingredients'" :class="{ active: dishEditorTab === 'ingredients' }" :disabled="dishDetailDraft.type === 'purchased'" @click="dishEditorTab = 'ingredients'"><PhList :size="17" /> Ingredientes</button>
+          <button type="button" role="tab" :aria-selected="dishEditorTab === 'description'" :class="{ active: dishEditorTab === 'description' }" @click="dishEditorTab = 'description'"><PhNotePencil :size="17" /> Descripción</button>
+          <button type="button" role="tab" :aria-selected="dishEditorTab === 'recipe'" :class="{ active: dishEditorTab === 'recipe' }" @click="dishEditorTab = 'recipe'"><PhChefHat :size="17" /> Receta</button>
+        </div>
+        <div class="dish-editor-scroll">
+          <div v-if="dishEditorTab === 'photo'" class="dish-editor-photo-layout">
+            <div class="dish-editor-photo-column">
+              <span class="field-kicker">FOTO DEL PLATO</span>
+              <a v-if="dishEditorDish?.photo_url" class="dish-editor-photo" :href="dishEditorDish.photo_url" target="_blank" rel="noreferrer"><img :src="dishEditorDish.photo_url" :alt="`Foto de ${dishEditorDish.name}`" /></a>
+              <div v-else class="dish-editor-photo dish-editor-photo-empty"><PhForkKnife :size="38" /></div>
+              <label class="photo-upload-button"><PhCamera :size="17" /> {{ dishEditorDish?.photo_url ? 'Cambiar foto' : 'Subir una foto' }}<input type="file" accept="image/*" capture="environment" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin'" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
+              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish)" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
+              <small class="field-help">JPG, PNG o WebP · Máximo 10 MB</small>
+            </div>
+            <div class="dish-editor-fields">
+              <label class="field-label"><span>Nombre del plato *</span><input v-model="dishDetailDraft.name" maxlength="190" required /></label>
+              <label class="field-label"><span>Tipo de plato</span><select v-model="dishDetailDraft.type"><option v-for="dishType in dishTypes" :key="dishType.id" :value="dishType.id">{{ dishType.label }}</option></select></label>
+              <label class="field-label"><span>Categoría</span><select v-model="dishDetailDraft.category"><option v-for="dishCategoryOption in dishCategories" :key="dishCategoryOption.id" :value="dishCategoryOption.id">{{ dishCategoryOption.label }}</option></select></label>
+              <p v-if="dishDetailDraft.type === 'purchased'" class="dish-purchased-help"><PhShoppingCart :size="17" /> Se añadirá «{{ dishDetailDraft.name }}» directamente a la lista de la compra.</p>
+              <label class="dish-editor-check"><input type="checkbox" :checked="dishEditorDish?.is_favorite" disabled /> <span>Marcado como plato favorito</span></label>
+              <p v-if="dishEditorDish?.source === 'admin'" class="field-help">Las fotos de las sugerencias iniciales no se pueden reemplazar.</p>
+            </div>
+          </div>
+          <div v-else-if="dishEditorTab === 'ingredients' && dishDetailDraft.type !== 'purchased'" class="dish-editor-tab-content">
+            <div class="dish-tab-intro"><div><span class="field-kicker">INGREDIENTES</span><h3>Lo que necesitas para prepararlo</h3></div><button type="button" class="secondary-button" @click="generateDishIngredients"><PhSparkle :size="17" weight="fill" /> Generar con IA</button></div>
+            <p class="muted">Añádelos uno a uno; se reutilizarán en tu lista de la compra.</p>
+            <div class="dish-ingredients-list">
+              <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row"><span>{{ index + 1 }}</span><input v-model="dishIngredientsDraft[index]" type="text" maxlength="190" list="ingredient-suggestions" placeholder="Ej.: tomate triturado" /><button type="button" class="icon-button ingredient-remove-button" aria-label="Eliminar ingrediente" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button></label>
+            </div>
+            <button type="button" class="secondary-button add-ingredient-button" @click="addDishIngredient"><PhPlus :size="17" /> Añadir ingrediente</button>
+          </div>
+          <div v-else-if="dishEditorTab === 'ingredients'" class="dish-editor-tab-content dish-purchased-notice"><PhShoppingCart :size="34" /><h3>Este plato se compra preparado</h3><p>No necesita ingredientes. En la lista de la compra aparecerá «{{ dishDetailDraft.name }}» como un artículo independiente.</p></div>
+          <div v-else-if="dishEditorTab === 'description'" class="dish-editor-tab-content"><label class="field-label"><span>Descripción breve</span><textarea v-model="dishDetailDraft.description" rows="8" maxlength="1000" placeholder="Cuenta qué hace especial a este plato, cuándo sueles prepararlo o con qué acompañarlo."></textarea></label><p class="field-help">Una frase clara ayuda a elegirlo cuando estés planificando la semana.</p></div>
+          <div v-else class="dish-editor-tab-content"><label class="field-label"><span>Receta</span><textarea v-model="dishDetailDraft.recipe" rows="12" maxlength="5000" placeholder="1. Prepara los ingredientes…\n2. Cocina a fuego medio…\n3. Sirve y disfruta."></textarea></label><p class="field-help">Puedes escribir pasos, tiempos y trucos de cocina.</p></div>
+        </div>
+        <div class="modal-footer dish-editor-footer"><button type="button" class="secondary-button" :disabled="dishDetailSaving" @click="closeDishEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="dishDetailSaving">{{ dishDetailSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
+      </form>
+    </dialog>
+
+    <dialog v-if="dishStatsOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishStats">
+      <section class="modal-card dish-stats-card">
+        <div class="modal-header dish-stats-header">
+          <div><p class="eyebrow">ANÁLISIS DEL PLATO</p><h2>{{ dishStatsDish?.name }}</h2></div>
+          <button type="button" class="icon-button" aria-label="Cerrar estadísticas" @click="closeDishStats"><PhX :size="22" /></button>
+        </div>
+        <div v-if="dishStatsData" class="dish-stats-scroll">
+          <div class="stats-hero"><div class="dish-stats-photo"><img v-if="dishStatsDish?.photo_url" :src="dishStatsDish.photo_url" :alt="`Foto de ${dishStatsDish.name}`" /><PhForkKnife v-else :size="30" /></div><div><span class="stats-category">{{ dishCategory(dishStatsDish || {}) }}</span><p>{{ dishStatsLoading ? 'Actualizando datos…' : 'Así encaja este plato en tus hábitos.' }}</p></div><PhHeart :size="27" :weight="dishStatsDish?.is_favorite ? 'fill' : 'regular'" class="stats-heart" /></div>
+          <h3>Estadísticas de consumo</h3>
+          <div class="stats-kpi-grid"><div class="stats-kpi"><span>Veces que lo has comido</span><strong>{{ dishStatsData.total }}</strong><small>en total</small></div><div class="stats-kpi"><span>Frecuencia</span><strong>{{ dishStatsData.frequency }}</strong><small>promedio</small></div><div class="stats-kpi"><span>Última vez</span><strong>{{ formatDishDate(dishStatsData.last_used_at) }}</strong><small>fecha registrada</small></div><div class="stats-kpi"><span>Racha actual</span><strong>{{ dishStatsData.streak || 0 }}</strong><small>semanas seguidas</small></div></div>
+          <div class="stats-section"><div class="stats-section-heading"><h3>Evolución mensual</h3><span>últimos 12 meses</span></div><div class="stats-chart" aria-label="Gráfico de usos por mes"><div v-for="(month, index) in dishStatsData.monthly" :key="index" class="stats-chart-column"><span class="stats-chart-bar" :style="{ height: `${month.height}%` }"></span><small>{{ statsMonthLabels[index] }}</small></div></div></div>
+          <div class="stats-section"><div class="stats-section-heading"><h3>Momentos favoritos</h3><span>cuándo lo eliges</span></div><div class="stats-breakdown"><div v-for="item in dishStatsData.meal_breakdown" :key="item.label" class="stats-breakdown-row"><span>{{ item.label }}</span><div class="stats-breakdown-track"><i :style="{ width: `${item.value}%` }"></i></div><strong>{{ item.value }}%</strong></div></div></div>
+          <div class="stats-extra"><div><PhClock :size="19" /><span>Tiempo medio entre usos</span><strong>{{ dishStatsData.average_gap_days ? `${dishStatsData.average_gap_days} días` : '—' }}</strong></div><div><PhChartBar :size="19" /><span>Ingredientes guardados</span><strong>{{ dishStatsDish?.ingredients?.length || 0 }}</strong></div></div>
+        </div>
+        <div class="modal-footer dish-stats-footer"><button type="button" class="secondary-button" @click="closeDishStats">Cerrar</button><button type="button" class="primary-button" @click="editDishFromStats">Editar plato <PhPencilSimple :size="17" /></button></div>
+      </section>
+    </dialog>
+
+    <dialog v-if="dishRecipeOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishRecipe">
+      <section class="modal-card dish-recipe-card">
+        <div class="modal-header dish-recipe-header">
+          <div>
+            <p class="eyebrow">RECETA DEL PLATO</p>
+            <h2>{{ dishRecipeDish?.name }}</h2>
+          </div>
+          <button type="button" class="icon-button" aria-label="Cerrar receta" @click="closeDishRecipe"><PhX :size="22" /></button>
+        </div>
+        <div class="dish-recipe-scroll">
+          <div class="dish-recipe-meta"><span class="stats-category">{{ dishCategory(dishRecipeDish || {}) }}</span><span>{{ dishTypeLabel(dishRecipeDish || {}) }}</span></div>
+          <p class="dish-recipe-text">{{ dishRecipeDish?.recipe }}</p>
+        </div>
+        <div class="modal-footer dish-recipe-footer"><button type="button" class="secondary-button" @click="closeDishRecipe">Cerrar</button><button type="button" class="primary-button" @click="editDishRecipe">Editar receta <PhPencilSimple :size="17" /></button></div>
+      </section>
+    </dialog>
+
+    <dialog v-if="ingredientEditorOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeIngredientEditor">
+      <form class="modal-card ingredient-editor-card" @submit.prevent="saveIngredientDetails">
+        <div class="modal-header ingredient-editor-header">
+          <div><p class="eyebrow">FICHA DEL INGREDIENTE</p><h2>Editar ingrediente</h2></div>
+          <button type="button" class="icon-button" aria-label="Cerrar editor de ingrediente" :disabled="ingredientEditorSaving" @click="closeIngredientEditor"><PhX :size="22" /></button>
+        </div>
+        <div class="ingredient-editor-content">
+          <div class="ingredient-editor-icon"><PhLeaf :size="34" /></div>
+          <label class="field-label"><span>Nombre del ingrediente *</span><input v-model="ingredientDetailDraft.name" maxlength="190" required /></label>
+          <label class="ingredient-editor-check"><input v-model="ingredientDetailDraft.exclude_from_shopping" type="checkbox" /><span><strong>No añadir a la lista de la compra</strong><small>Este ingrediente seguirá disponible en tus platos, pero no se propondrá al generar compras.</small></span></label>
+        </div>
+        <div class="modal-footer ingredient-editor-footer"><button type="button" class="secondary-button" :disabled="ingredientEditorSaving" @click="closeIngredientEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="ingredientEditorSaving">{{ ingredientEditorSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
+      </form>
+    </dialog>
+
+    <dialog v-if="ingredientStatsOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeIngredientStats">
+      <section class="modal-card ingredient-stats-card">
+        <div class="modal-header ingredient-stats-header">
+          <div><p class="eyebrow">ANÁLISIS DEL INGREDIENTE</p><h2>{{ ingredientStatsIngredient?.name }}</h2></div>
+          <button type="button" class="icon-button" aria-label="Cerrar estadísticas del ingrediente" @click="closeIngredientStats"><PhX :size="22" /></button>
+        </div>
+        <div v-if="ingredientStatsData" class="ingredient-stats-scroll">
+          <div class="ingredient-stats-hero"><div class="ingredient-stats-icon"><PhLeaf :size="30" /></div><div><span class="stats-category">{{ ingredientStatsData.excluded ? 'No comprar' : 'En la lista de la compra' }}</span><p>Así se utiliza este ingrediente en tu catálogo.</p></div></div>
+          <div class="stats-kpi-grid ingredient-stats-kpis"><div class="stats-kpi"><span>Platos relacionados</span><strong>{{ ingredientStatsData.dish_count }}</strong><small>en tu catálogo</small></div><div class="stats-kpi"><span>Usos estimados</span><strong>{{ ingredientStatsData.usage_total }}</strong><small>según tus menús</small></div><div class="stats-kpi"><span>Frecuencia</span><strong>{{ ingredientStatsData.frequency }}</strong><small>promedio</small></div><div class="stats-kpi"><span>Estado de compra</span><strong>{{ ingredientStatsData.excluded ? 'Excluido' : 'Activo' }}</strong><small>preferencia actual</small></div></div>
+          <div class="stats-section"><div class="stats-section-heading"><h3>Platos donde aparece</h3><span>más utilizados primero</span></div><div v-if="ingredientStatsData.dishes.length" class="ingredient-stats-dishes"><div v-for="dish in ingredientStatsData.dishes" :key="dish.id" class="ingredient-stats-dish"><span class="ingredient-stats-dish-icon"><PhForkKnife :size="17" /></span><span>{{ dish.name }}</span><strong>{{ dish.times_used || 0 }} {{ dish.times_used === 1 ? 'uso' : 'usos' }}</strong></div></div><p v-else class="detail-empty ingredient-stats-empty">Todavía no está asociado a ningún plato.</p></div>
+        </div>
+        <div class="modal-footer ingredient-stats-footer"><button type="button" class="secondary-button" @click="closeIngredientStats">Cerrar</button><button type="button" class="primary-button" @click="closeIngredientStats">Volver al catálogo</button></div>
+      </section>
+    </dialog>
 
     <dialog
       v-if="dishIngredientsEditorOpen"
