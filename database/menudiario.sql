@@ -53,12 +53,27 @@ CREATE TABLE IF NOT EXISTS md_groups (
   name VARCHAR(120) NOT NULL DEFAULT 'Menu Diario',
   owner_uid VARCHAR(128) NOT NULL,
   invite_code VARCHAR(8) NOT NULL,
+  default_supermarket_id BIGINT UNSIGNED NULL,
   enabled_meals VARCHAR(128) NOT NULL DEFAULT '["lunch"]',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_md_group_invite (invite_code),
   KEY idx_md_group_owner (owner_uid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_supermarkets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  slug VARCHAR(64) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  logo VARCHAR(120) NOT NULL DEFAULT '',
+  brand_color VARCHAR(16) NOT NULL DEFAULT '#2c6b4c',
+  display_order INT NOT NULL DEFAULT 0,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_md_supermarket_slug (slug),
+  KEY idx_md_supermarket_active (active, display_order)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS md_group_members (
@@ -147,6 +162,37 @@ CREATE TABLE IF NOT EXISTS md_notification_reads (
   CONSTRAINT fk_md_notification_read_notification FOREIGN KEY (notification_id) REFERENCES md_notifications (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS md_tasks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  group_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(190) NOT NULL,
+  description TEXT NOT NULL,
+  assigned_all TINYINT(1) NOT NULL DEFAULT 1,
+  assigned_uid VARCHAR(128) NULL,
+  status ENUM('pending', 'parked', 'completed', 'cancelled') NOT NULL DEFAULT 'pending',
+  importance ENUM('low', 'medium', 'high') NOT NULL DEFAULT 'medium',
+  due_at DATETIME NULL,
+  reminders_json TEXT NOT NULL,
+  created_by VARCHAR(128) NOT NULL,
+  updated_by VARCHAR(128) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_md_task_group_status (group_id, status, due_at),
+  KEY idx_md_task_assigned (group_id, assigned_uid),
+  CONSTRAINT fk_md_task_group FOREIGN KEY (group_id) REFERENCES md_groups(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_task_reminder_deliveries (
+  delivery_key CHAR(64) NOT NULL,
+  task_id BIGINT UNSIGNED NOT NULL,
+  uid VARCHAR(128) NOT NULL,
+  triggered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (delivery_key),
+  KEY idx_md_task_delivery_task (task_id, triggered_at),
+  CONSTRAINT fk_md_task_delivery_task FOREIGN KEY (task_id) REFERENCES md_tasks(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS md_dishes (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   owner_uid VARCHAR(128) NOT NULL DEFAULT '*',
@@ -210,6 +256,15 @@ CREATE TABLE IF NOT EXISTS md_user_ingredients (
   PRIMARY KEY (uid, ingredient_id),
   KEY idx_md_user_ingredients_ingredient (ingredient_id),
   CONSTRAINT fk_md_user_ingredients_ingredient FOREIGN KEY (ingredient_id) REFERENCES md_ingredients(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS md_group_ingredients (
+  group_id BIGINT UNSIGNED NOT NULL,
+  ingredient_id BIGINT UNSIGNED NOT NULL,
+  supermarket_id BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (group_id, ingredient_id),
+  KEY idx_md_group_ingredients_supermarket (supermarket_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS md_dish_ingredient_links (
@@ -293,3 +348,22 @@ VALUES
   ('*', 'Tortilla de patatas', 'tortilla de patatas', 'admin', 'system'),
   ('*', 'Pasta con tomate', 'pasta con tomate', 'admin', 'system'),
   ('*', 'Ensalada completa', 'ensalada completa', 'admin', 'system');
+
+INSERT IGNORE INTO md_supermarkets (slug, name, logo, brand_color, display_order) VALUES
+  ('mercadona', 'Mercadona', 'mercadona', '#00843d', 10),
+  ('dia', 'DIA', 'dia', '#e30613', 20),
+  ('lidl', 'Lidl', 'lidl', '#0050aa', 30),
+  ('spar', 'SPAR', 'spar', '#e30613', 40),
+  ('costco', 'Costco', 'costco', '#e31837', 50),
+  ('hipercor', 'Hipercor', 'hipercor', '#ec1c24', 60),
+  ('provecaex', 'Provecaex', 'provecaex', '#166534', 70),
+  ('carrefour', 'Carrefour', 'carrefour', '#004e9e', 80),
+  ('campesano', 'Campesano', 'campesano', '#8b5e34', 90),
+  ('alcampo', 'Alcampo', 'alcampo', '#e30613', 100),
+  ('aldi', 'ALDI', 'aldi', '#0066b3', 110),
+  ('eroski', 'Eroski', 'eroski', '#e30613', 120),
+  ('consum', 'Consum', 'consum', '#e30613', 130),
+  ('bm', 'BM Supermercados', 'bm', '#1d4ed8', 140),
+  ('el-corte-ingles', 'El Corte Inglés', 'el-corte-ingles', '#007a53', 150),
+  ('leclerc', 'E.Leclerc', 'leclerc', '#e30613', 160),
+  ('otro', 'Otro supermercado', 'otro', '#64748b', 999);

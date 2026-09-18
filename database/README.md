@@ -23,6 +23,8 @@ Tablas actuales:
   por defecto.
 - `md_notifications`, `md_notification_reads`: actividad del grupo y lectura
   independiente por usuario.
+- `md_tasks`, `md_task_reminder_deliveries`: tareas del grupo, asignación,
+  estado, importancia, vencimiento y control de avisos enviados.
 - `md_dishes`: catálogo de platos.
 - `md_ingredients`: catálogo único de ingredientes, sin duplicados.
 - `md_user_ingredients`: ingredientes disponibles en el catálogo personal de cada usuario y su preferencia de exclusión de la lista de la compra.

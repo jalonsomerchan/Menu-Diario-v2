@@ -117,6 +117,17 @@ const notificationTypes = [
   { id: 'group', label: 'Actividad del grupo' },
   { id: 'reminder', label: 'Recordatorios programados' },
 ]
+const taskStatuses = [
+  { id: 'pending', label: 'Pendiente' },
+  { id: 'parked', label: 'Aparcada' },
+  { id: 'completed', label: 'Completada' },
+  { id: 'cancelled', label: 'Cancelada' },
+]
+const taskImportances = [
+  { id: 'low', label: 'Baja' },
+  { id: 'medium', label: 'Media' },
+  { id: 'high', label: 'Alta' },
+]
 const alertIconOptions = [
   { id: 'bell', label: 'Campana', icon: PhBell },
   { id: 'alarm', label: 'Alarma', icon: PhAlarm },
@@ -153,6 +164,7 @@ const preferences = reactive({
 const dishes = ref([])
 const ingredientCatalog = ref([])
 const ingredientList = ref([])
+const supermarkets = ref([])
 const tuppers = ref([])
 const tupperSearch = ref('')
 const tupperFilter = ref('all')
@@ -171,6 +183,22 @@ const dailyOptions = ref([])
 const globalAlerts = ref([])
 const notifications = ref([])
 const notificationUnreadCount = ref(0)
+const tasks = ref([])
+const pendingTaskCount = ref(0)
+const taskEditorOpen = ref(false)
+const taskSaving = ref(false)
+const taskFilter = ref('all')
+const taskDraft = reactive({
+  id: '',
+  title: '',
+  description: '',
+  assigned_all: true,
+  assigned_uid: '',
+  status: 'pending',
+  importance: 'medium',
+  due_at: '',
+  reminders: [],
+})
 const notificationsOpen = ref(false)
 const menuOpen = ref(false)
 const inviteEmail = ref('')
@@ -256,7 +284,7 @@ const ingredientSort = ref('name')
 const ingredientEditorOpen = ref(false)
 const ingredientEditorSaving = ref(false)
 const ingredientEditorIngredient = ref(null)
-const ingredientDetailDraft = reactive({ id: '', name: '', exclude_from_shopping: false })
+const ingredientDetailDraft = reactive({ id: '', name: '', exclude_from_shopping: false, supermarket_id: 0 })
 const ingredientStatsOpen = ref(false)
 const ingredientStatsIngredient = ref(null)
 const ingredientStatsData = ref(null)
@@ -326,6 +354,19 @@ const route = useRoute()
 const router = useRouter()
 const baseUrl = import.meta.env.BASE_URL
 const publicAsset = (path) => `${baseUrl}${path.replace(/^\/+/, '')}`
+const supermarketLogo = (supermarket) => {
+  if (!supermarket?.logo) return publicAsset('supermarkets/otro.svg')
+  const pngLogos = new Set(['alcampo', 'bm', 'consum', 'provecaex'])
+  const extension = pngLogos.has(supermarket.logo) ? 'png' : 'svg'
+  return publicAsset(`supermarkets/${supermarket.logo}.${extension}`)
+}
+const isDarkSupermarketLogo = (supermarket) => supermarket?.logo === 'provecaex'
+const ingredientEditorSupermarket = computed(() => {
+  const selectedId = Number(ingredientDetailDraft.supermarket_id || 0)
+  return selectedId
+    ? supermarkets.value.find((item) => Number(item.id) === selectedId) || null
+    : group.value?.default_supermarket || supermarkets.value[0] || null
+})
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
 const isIngredients = computed(() => route.name === 'ingredients')
@@ -333,8 +374,13 @@ const isIngredientMerge = computed(() => route.name === 'ingredient-merge')
 const isTuppers = computed(() => route.name === 'tuppers')
 const isShopping = computed(() => route.name === 'shopping')
 const isCalendar = computed(() => route.name === 'calendar')
+const isTasks = computed(() => route.name === 'tasks')
 const isShared = computed(() => route.name === 'shared-day')
 const isDashboard = computed(() => route.name === 'dashboard')
+const filteredTasks = computed(() => {
+  if (taskFilter.value === 'all') return tasks.value
+  return tasks.value.filter((task) => task.status === taskFilter.value)
+})
 const monthLabel = computed(() =>
   new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(calendarMonth.value),
 )
@@ -505,6 +551,16 @@ const shoppingToBuyItems = computed(() =>
     .filter((_, index) => !shoppingChecked.value.has(index))
     .map((item) => item.name),
 )
+const shoppingSupermarketGroups = computed(() => {
+  const groups = new Map()
+  shoppingItems.value.forEach((item, index) => {
+    const supermarket = item.supermarket || group.value?.default_supermarket || supermarkets.value[0] || { id: 0, name: 'Supermercado' }
+    const key = Number(supermarket.id || 0)
+    if (!groups.has(key)) groups.set(key, { supermarket, items: [] })
+    groups.get(key).items.push({ item, index })
+  })
+  return [...groups.values()]
+})
 const hasUnreadNotifications = computed(() => notificationUnreadCount.value > 0)
 const defaultRouletteDishes = [
   {
@@ -771,9 +827,12 @@ function applyContext(data) {
   telegram.value = data.telegram || telegram.value
   notifications.value = data.notifications || notifications.value
   notificationUnreadCount.value = Number(data.notification_unread_count || 0)
+  if (Array.isArray(data.tasks)) tasks.value = data.tasks
+  if (data.pending_task_count !== undefined) pendingTaskCount.value = Number(data.pending_task_count || 0)
   dishes.value = data.dishes || dishes.value
   ingredientCatalog.value = data.ingredients || ingredientCatalog.value
   ingredientList.value = data.ingredient_list || ingredientList.value
+  supermarkets.value = data.supermarkets || supermarkets.value
 }
 
 async function fetchRange(from, to, includeContext = true) {
@@ -806,6 +865,18 @@ async function loadDashboardRange() {
     if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadTasks() {
+  if (!user.value) return
+  try {
+    await refreshToken()
+    const data = await getJson('menudiario/tasks', userToken.value)
+    tasks.value = data.tasks || []
+    pendingTaskCount.value = Number(data.pending_task_count || 0)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar las tareas.'
   }
 }
 
@@ -943,20 +1014,22 @@ async function generateShoppingList() {
     shoppingItems.value = (data.items || [])
       .map((item) =>
         typeof item === 'string'
-          ? { name: item, dishes: [] }
-          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [] },
+          ? { name: item, dishes: [], supermarket: null }
+          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [], supermarket: item?.supermarket || null },
       )
       .filter((item) => item.name)
     shoppingExcludedItems.value = (data.excluded_items || [])
       .map((item) =>
         typeof item === 'string'
-          ? { name: item, dishes: [] }
-          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [] },
+          ? { name: item, dishes: [], supermarket: null }
+          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [], supermarket: item?.supermarket || null },
       )
       .filter((item) => item.name)
     if (Array.isArray(data.dishes)) dishes.value = data.dishes
     if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
     if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
+    if (Array.isArray(data.supermarkets)) supermarkets.value = data.supermarkets
+    if (data.group) group.value = data.group
     shoppingChecked.value = new Set()
     shoppingErrorDetails.value = ''
     notice.value = 'Lista generada. Revísala antes de ir a comprar.'
@@ -980,7 +1053,9 @@ async function generateShoppingList() {
 
 async function copyShoppingList() {
   if (!shoppingItems.value.length) return
-  const text = shoppingItems.value.map((item) => `☐ ${item.name}`).join('\n')
+  const text = shoppingSupermarketGroups.value
+    .map((shoppingGroup) => `${shoppingGroup.supermarket.name}\n${shoppingGroup.items.map(({ item }) => `☐ ${item.name}`).join('\n')}`)
+    .join('\n\n')
   try {
     await navigator.clipboard.writeText(text)
     notice.value = 'Lista copiada al portapapeles.'
@@ -1281,6 +1356,7 @@ function openIngredientEditor(ingredient) {
     id: ingredient.id,
     name: ingredient.name || '',
     exclude_from_shopping: Boolean(ingredient.exclude_from_shopping),
+    supermarket_id: ingredient.supermarket_override ? Number(ingredient.supermarket_id || 0) : 0,
   })
   ingredientEditorOpen.value = true
 }
@@ -1300,6 +1376,7 @@ async function saveIngredientDetails() {
       id: ingredientDetailDraft.id,
       name,
       exclude_from_shopping: ingredientDetailDraft.exclude_from_shopping,
+      supermarket_id: Number(ingredientDetailDraft.supermarket_id || 0),
     })
     ingredientCatalog.value = data.ingredients || ingredientCatalog.value
     ingredientList.value = data.ingredient_list || ingredientList.value
@@ -1698,12 +1775,17 @@ async function logout() {
   globalAlerts.value = []
   notifications.value = []
   notificationUnreadCount.value = 0
+  tasks.value = []
+  pendingTaskCount.value = 0
+  taskEditorOpen.value = false
+  taskFilter.value = 'all'
   notificationsOpen.value = false
   menuOpen.value = false
   shoppingSelectedDishes.value = new Set()
   shoppingSelectionInitialized.value = false
   shoppingItems.value = []
   shoppingExcludedItems.value = []
+  supermarkets.value = []
   shoppingChecked.value = new Set()
   ingredientMergeSelected.value = new Set()
   ingredientMergeKeepId.value = ''
@@ -2123,6 +2205,24 @@ async function inviteMember() {
     saving.value = false
   }
 }
+async function saveGroupSupermarket() {
+  if (!isGroupOwner.value || !group.value?.default_supermarket_id || saving.value) return
+  saving.value = true
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/save_group_supermarket', userToken.value, {
+      supermarket_id: Number(group.value.default_supermarket_id),
+    })
+    group.value = data.group || group.value
+    if (Array.isArray(data.supermarkets)) supermarkets.value = data.supermarkets
+    if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
+    notice.value = 'Supermercado del grupo actualizado.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo actualizar el supermercado del grupo.'
+  } finally {
+    saving.value = false
+  }
+}
 async function joinGroup() {
   if (!joinCode.value.trim()) return
   saving.value = true
@@ -2380,6 +2480,83 @@ async function markAllNotificationsRead() {
       reason instanceof Error ? reason.message : 'No se pudieron marcar las notificaciones.'
   }
 }
+function taskStatusLabel(status) {
+  return taskStatuses.find((item) => item.id === status)?.label || 'Pendiente'
+}
+function taskImportanceLabel(importance) {
+  return taskImportances.find((item) => item.id === importance)?.label || 'Media'
+}
+function formatTaskDueDate(value) {
+  if (!value) return 'Sin fecha de fin'
+  const date = new Date(String(value).replace(' ', 'T'))
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+function taskReminderLabel(reminder) {
+  if (reminder.type === 'daily') return `Diario · ${reminder.time || '09:00'}`
+  if (reminder.type === 'at_due') return 'A la fecha y hora de fin'
+  const days = Number(reminder.days_before || 0)
+  return `${days} ${days === 1 ? 'día' : 'días'} antes · ${reminder.time || '09:00'}`
+}
+function openNewTask() {
+  Object.assign(taskDraft, {
+    id: '', title: '', description: '', assigned_all: true, assigned_uid: '', status: 'pending',
+    importance: 'medium', due_at: '', reminders: [],
+  })
+  taskEditorOpen.value = true
+}
+function editTask(task) {
+  Object.assign(taskDraft, { ...task, reminders: (task.reminders || []).map((reminder) => ({ ...reminder })) })
+  taskEditorOpen.value = true
+}
+function closeTaskEditor() {
+  if (!taskSaving.value) taskEditorOpen.value = false
+}
+function addTaskReminder(type = 'before') {
+  taskDraft.reminders.push({ type, days_before: type === 'before' ? 1 : 0, time: '09:00', enabled: true })
+}
+function removeTaskReminder(index) {
+  taskDraft.reminders.splice(index, 1)
+}
+async function saveTask(closeAfter = true) {
+  if (!taskDraft.title.trim()) return
+  taskSaving.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/save_task', userToken.value, { task: { ...taskDraft } })
+    tasks.value = data.tasks || tasks.value
+    pendingTaskCount.value = Number(data.pending_task_count || 0)
+    if (closeAfter) taskEditorOpen.value = false
+    notice.value = taskDraft.id ? 'Tarea actualizada.' : 'Tarea creada.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo guardar la tarea.'
+  } finally {
+    taskSaving.value = false
+  }
+}
+async function changeTaskStatus(task, status) {
+  const previous = { ...taskDraft }
+  Object.assign(taskDraft, { ...task, status, reminders: (task.reminders || []).map((reminder) => ({ ...reminder })) })
+  await saveTask(false)
+  Object.assign(taskDraft, previous)
+}
+async function deleteTask(task) {
+  if (!window.confirm(`¿Borrar la tarea «${task.title}»?`)) return
+  taskSaving.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/delete_task', userToken.value, { id: task.id })
+    tasks.value = data.tasks || tasks.value
+    pendingTaskCount.value = Number(data.pending_task_count || 0)
+    notice.value = 'Tarea borrada.'
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo borrar la tarea.'
+  } finally {
+    taskSaving.value = false
+  }
+}
 async function saveDay(closeAfter = true) {
   saving.value = true
   error.value = ''
@@ -2567,6 +2744,10 @@ function goToCalendar() {
   menuOpen.value = false
   router.push({ name: 'calendar' })
 }
+function goToTasks() {
+  menuOpen.value = false
+  router.push({ name: 'tasks' })
+}
 
 function isRunningStandalone() {
   return (
@@ -2616,6 +2797,7 @@ watch(() => dishDetailDraft.type, (type) => {
 watch([() => route.name, calendarMonth], () => {
   if (user.value && isCalendar.value) void loadCalendarMonth()
   if (user.value && isShopping.value) void loadShoppingRange()
+  if (user.value && isTasks.value) void loadTasks()
 })
 
 onMounted(async () => {
@@ -2754,6 +2936,8 @@ onUnmounted(() => {
             <PhShoppingCart :size="19" weight="regular" /><span>Lista de la compra</span></button
           ><button type="button" :class="{ active: isCalendar }" @click="goToCalendar">
             <PhCalendarBlank :size="19" weight="regular" /><span>Calendario</span></button
+          ><button type="button" :class="{ active: isTasks }" @click="goToTasks">
+            <PhListChecks :size="19" weight="regular" /><span>Tareas</span></button
           ><button type="button" :class="{ active: isSettings }" @click="goToSettings">
             <PhGear :size="19" weight="regular" /><span>Ajustes</span>
           </button>
@@ -3057,11 +3241,16 @@ onUnmounted(() => {
             <p>{{ ingredientList.length ? 'Prueba con otro nombre o limpia los filtros.' : 'Añade ingredientes para reutilizarlos al editar tus platos.' }}</p>
           </div>
           <div v-else class="ingredient-table" role="table" aria-label="Listado de ingredientes">
-            <div class="ingredient-table-head" role="row"><span role="columnheader">Ingrediente <small>↕</small></span><span role="columnheader">Platos</span><span role="columnheader">Usos</span><span role="columnheader">Lista de la compra</span><span role="columnheader" class="ingredient-action-heading">Editar</span><span role="columnheader" class="ingredient-action-heading">Estadísticas</span><span role="columnheader" class="ingredient-action-heading" aria-label="Eliminar"></span></div>
+            <div class="ingredient-table-head" role="row"><span role="columnheader">Ingrediente <small>↕</small></span><span role="columnheader">Platos</span><span role="columnheader">Usos</span><span role="columnheader">Supermercado</span><span role="columnheader">Lista de la compra</span><span role="columnheader" class="ingredient-action-heading">Editar</span><span role="columnheader" class="ingredient-action-heading">Estadísticas</span><span role="columnheader" class="ingredient-action-heading" aria-label="Eliminar"></span></div>
             <div v-for="ingredient in pagedIngredients" :key="ingredient.id" class="ingredient-table-row" role="row">
               <div class="ingredient-name-cell" role="cell"><span class="ingredient-table-icon"><PhLeaf :size="19" /></span><div><strong>{{ ingredient.name }}</strong><small>{{ ingredient.exclude_from_shopping ? 'Excluido de la compra' : 'Disponible para la compra' }}</small></div></div>
               <div class="ingredient-number-cell" role="cell"><strong>{{ ingredient.dish_count || 0 }}</strong><small>{{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}</small></div>
               <div class="ingredient-number-cell" role="cell"><strong>{{ ingredientLinkedDishes(ingredient).reduce((total, dish) => total + Number(dish.times_used || 0), 0) }}</strong><small>usos estimados</small></div>
+              <div class="ingredient-supermarket-cell" role="cell">
+                <span class="ingredient-supermarket-logo" :title="ingredient.supermarket?.name || 'Supermercado del grupo'">
+                  <img :class="{ 'supermarket-logo-dark': isDarkSupermarketLogo(ingredient.supermarket) }" :src="supermarketLogo(ingredient.supermarket)" :alt="`Supermercado: ${ingredient.supermarket?.name || 'del grupo'}`" />
+                </span>
+              </div>
               <div class="ingredient-shopping-cell" role="cell"><button type="button" class="ingredient-shopping-toggle" :class="{ active: ingredient.exclude_from_shopping }" :aria-pressed="ingredient.exclude_from_shopping" :title="ingredient.exclude_from_shopping ? 'Volver a añadir a la lista de la compra' : 'No añadir a la lista de la compra'" @click.stop.prevent="toggleIngredientShopping(ingredient)"><PhShoppingCart :size="16" /><span>{{ ingredient.exclude_from_shopping ? 'No comprar' : 'Comprar' }}</span></button></div>
               <div class="ingredient-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Editar ${ingredient.name}`" title="Editar ingrediente" @click="openIngredientEditor(ingredient)"><PhPencilSimple :size="18" /></button></div>
               <div class="ingredient-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Ver estadísticas de ${ingredient.name}`" title="Ver estadísticas" @click="openIngredientStats(ingredient)"><PhChartBar :size="19" /></button></div>
@@ -3450,25 +3639,31 @@ onUnmounted(() => {
                     <PhSpeakerHigh :size="17" /> Enviar a Alexa
                   </a>
                 </div>
-                <div class="shopping-items-list">
-                  <label
-                    v-for="(item, index) in shoppingItems"
-                    :key="`${item.name}-${index}`"
-                    class="shopping-item"
-                    :class="{ checked: shoppingItemChecked(index) }"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="shoppingItemChecked(index)"
-                      @change="toggleShoppingItem(index)"
-                    />
-                    <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
-                    <span class="shopping-item-copy">
-                      <strong>{{ item.name }}</strong>
-                      <small v-if="item.dishes?.length">{{ item.dishes.join(' · ') }}</small>
-                    </span>
-                  </label>
-                </div>
+                <section v-for="shoppingGroup in shoppingSupermarketGroups" :key="shoppingGroup.supermarket.id" class="shopping-supermarket-group">
+                  <div class="shopping-supermarket-heading">
+                    <img :class="{ 'supermarket-logo-dark': isDarkSupermarketLogo(shoppingGroup.supermarket) }" :src="supermarketLogo(shoppingGroup.supermarket)" :alt="`Logo de ${shoppingGroup.supermarket.name}`" />
+                    <div><strong>{{ shoppingGroup.supermarket.name }}</strong><small>{{ shoppingGroup.items.length }} {{ shoppingGroup.items.length === 1 ? 'producto' : 'productos' }}</small></div>
+                  </div>
+                  <div class="shopping-items-list">
+                    <label
+                      v-for="entry in shoppingGroup.items"
+                      :key="`${entry.item.name}-${entry.index}`"
+                      class="shopping-item"
+                      :class="{ checked: shoppingItemChecked(entry.index) }"
+                    >
+                      <input
+                        type="checkbox"
+                        :checked="shoppingItemChecked(entry.index)"
+                        @change="toggleShoppingItem(entry.index)"
+                      />
+                      <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
+                      <span class="shopping-item-copy">
+                        <strong>{{ entry.item.name }}</strong>
+                        <small v-if="entry.item.dishes?.length">{{ entry.item.dishes.join(' · ') }}</small>
+                      </span>
+                    </label>
+                  </div>
+                </section>
                 <div v-if="shoppingExcludedItems.length" class="shopping-excluded-section">
                   <div class="shopping-excluded-heading">
                     <PhShoppingCart :size="17" />
@@ -3615,7 +3810,57 @@ onUnmounted(() => {
             ><span><i class="legend-today"></i> Hoy</span>
           </div>
         </section>
+        <section v-else-if="isTasks" class="tasks-page">
+          <div class="page-heading tasks-heading">
+            <div>
+              <p class="eyebrow">ORGANIZA EL DÍA A DÍA</p>
+              <h1>Tareas</h1>
+              <p class="muted">Crea tareas para ti o para todo el grupo y recibe avisos antes de que llegue el momento.</p>
+            </div>
+            <button type="button" class="primary-button" @click="openNewTask"><PhPlus :size="18" /> Nueva tarea</button>
+          </div>
+          <div class="tasks-toolbar">
+            <div class="task-filters" aria-label="Filtrar tareas">
+              <button v-for="filter in [{ id: 'all', label: 'Todas' }, ...taskStatuses]" :key="filter.id" type="button" :class="{ active: taskFilter === filter.id }" @click="taskFilter = filter.id">
+                {{ filter.label }}<span v-if="filter.id === 'pending' && pendingTaskCount">{{ pendingTaskCount }}</span>
+              </button>
+            </div>
+          </div>
+          <div v-if="!filteredTasks.length" class="empty-state tasks-empty-state">
+            <PhListChecks :size="38" weight="regular" />
+            <h2>{{ taskFilter === 'all' ? 'Aún no hay tareas' : 'No hay tareas en este estado' }}</h2>
+            <p>{{ taskFilter === 'all' ? 'Crea la primera y comparte la organización con tu grupo.' : 'Prueba otro filtro o crea una tarea nueva.' }}</p>
+            <button v-if="taskFilter === 'all'" type="button" class="primary-button" @click="openNewTask"><PhPlus :size="18" /> Crear tarea</button>
+          </div>
+          <section v-else class="tasks-grid" aria-label="Listado de tareas">
+            <article v-for="task in filteredTasks" :key="task.id" class="task-card" :class="[`task-${task.importance}`, `task-status-${task.status}`]">
+              <div class="task-card-topline">
+                <span class="task-importance"><i></i>{{ taskImportanceLabel(task.importance) }}</span>
+                <div class="task-card-actions">
+                  <button type="button" class="card-icon-button" :aria-label="`Editar ${task.title}`" title="Editar" @click="editTask(task)"><PhPencilSimple :size="18" /></button>
+                  <button type="button" class="card-icon-button danger" :aria-label="`Borrar ${task.title}`" title="Borrar" @click="deleteTask(task)"><PhTrash :size="18" /></button>
+                </div>
+              </div>
+              <h2>{{ task.title }}</h2>
+              <p v-if="task.description" class="task-description">{{ task.description }}</p>
+              <div class="task-meta">
+                <span><PhUsers :size="16" /> {{ task.assigned_all ? 'Todo el grupo' : (task.assigned_email || 'Usuario asignado') }}</span>
+                <span :class="{ overdue: task.status === 'pending' && task.due_at && new Date(String(task.due_at).replace(' ', 'T')) < new Date() }"><PhClock :size="16" /> {{ formatTaskDueDate(task.due_at) }}</span>
+                <span v-if="task.reminders?.length" :title="task.reminders.map(taskReminderLabel).join(', ')"><PhBell :size="16" /> {{ task.reminders.length }} {{ task.reminders.length === 1 ? 'aviso' : 'avisos' }}</span>
+              </div>
+              <div class="task-card-footer">
+                <label class="task-status-select"><span class="sr-only">Estado de {{ task.title }}</span><select :value="task.status" @change="changeTaskStatus(task, $event.target.value)"><option v-for="status in taskStatuses" :key="status.id" :value="status.id">{{ status.label }}</option></select><PhCaretDown :size="15" /></label>
+                <small>{{ taskStatusLabel(task.status) }}</small>
+              </div>
+            </article>
+          </section>
+        </section>
         <template v-else-if="isDashboard">
+          <button v-if="pendingTaskCount" type="button" class="dashboard-task-notice" @click="goToTasks">
+            <span class="dashboard-task-notice-icon"><PhListChecks :size="20" /></span>
+            <span><strong>{{ pendingTaskCount }} {{ pendingTaskCount === 1 ? 'tarea pendiente' : 'tareas pendientes' }}</strong><small>Revísalas y marca las que ya estén hechas.</small></span>
+            <PhArrowRight :size="19" />
+          </button>
           <section
             v-if="loading"
             class="week-grid dashboard-skeleton-grid"
@@ -3791,6 +4036,38 @@ onUnmounted(() => {
       </section>
     </main>
 
+    <dialog v-if="taskEditorOpen" open class="modal-backdrop" @click.self="closeTaskEditor">
+      <form class="modal-card task-editor-card" @submit.prevent="saveTask()">
+        <div class="modal-header">
+          <div><p class="eyebrow">GESTIÓN DEL GRUPO</p><h2>{{ taskDraft.id ? 'Editar tarea' : 'Nueva tarea' }}</h2></div>
+          <button type="button" class="icon-button" aria-label="Cerrar editor" :disabled="taskSaving" @click="closeTaskEditor"><PhX :size="22" /></button>
+        </div>
+        <div class="task-editor-scroll">
+          <label class="field-label"><span>Nombre de la tarea *</span><input v-model="taskDraft.title" maxlength="190" required autofocus placeholder="Ej.: Comprar detergente" /></label>
+          <label class="field-label"><span>Descripción</span><textarea v-model="taskDraft.description" rows="4" maxlength="5000" placeholder="Añade los detalles que hagan falta."></textarea></label>
+          <div class="task-editor-grid">
+            <label class="field-label"><span>Estado</span><select v-model="taskDraft.status"><option v-for="status in taskStatuses" :key="status.id" :value="status.id">{{ status.label }}</option></select></label>
+            <label class="field-label"><span>Importancia</span><select v-model="taskDraft.importance"><option v-for="importance in taskImportances" :key="importance.id" :value="importance.id">{{ importance.label }}</option></select></label>
+            <label class="field-label"><span>Fecha y hora de fin</span><input v-model="taskDraft.due_at" type="datetime-local" /></label>
+            <label class="field-label"><span>Asignada a</span><select v-model="taskDraft.assigned_uid" :disabled="taskDraft.assigned_all"><option value="">Selecciona un usuario</option><option v-for="member in group?.members || []" :key="member.uid" :value="member.uid">{{ member.email || member.uid }}</option></select></label>
+          </div>
+          <label class="task-all-members-check"><input v-model="taskDraft.assigned_all" type="checkbox" /> <span><strong>Asignar a todo el grupo</strong><small>Los avisos se enviarán a todos los miembros.</small></span></label>
+          <section class="task-reminders-editor">
+            <div class="task-reminders-heading"><div><span class="field-kicker">AVISOS</span><h3>¿Cuándo avisar?</h3></div><button type="button" class="secondary-button" @click="addTaskReminder('before')"><PhPlus :size="16" /> Añadir aviso</button></div>
+            <p v-if="!taskDraft.reminders.length" class="field-help">Puedes añadir un aviso diario, uno o varios días antes o justo al llegar la fecha de fin.</p>
+            <div v-for="(reminder, index) in taskDraft.reminders" :key="index" class="task-reminder-editor-row">
+              <label class="field-label"><span>Tipo</span><select v-model="reminder.type"><option value="daily">Diario</option><option value="before">Antes de la fecha</option><option value="at_due" :disabled="!taskDraft.due_at">A la fecha y hora de fin</option></select></label>
+              <label v-if="reminder.type === 'before'" class="field-label"><span>Días antes</span><input v-model.number="reminder.days_before" type="number" min="0" max="30" /></label>
+              <label v-if="reminder.type !== 'at_due'" class="field-label"><span>Hora</span><input v-model="reminder.time" type="time" /></label>
+              <span v-else class="task-reminder-due-hint">Se enviará cuando llegue la fecha y hora de fin.</span>
+              <button type="button" class="icon-button task-reminder-remove" aria-label="Quitar aviso" @click="removeTaskReminder(index)"><PhTrash :size="17" /></button>
+            </div>
+          </section>
+        </div>
+        <div class="modal-footer"><button type="button" class="secondary-button" :disabled="taskSaving" @click="closeTaskEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="taskSaving || !taskDraft.title.trim()">{{ taskSaving ? 'Guardando…' : 'Guardar tarea' }}</button></div>
+      </form>
+    </dialog>
+
     <dialog v-if="dishEditorOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishEditor">
       <form class="modal-card dish-editor-card" @submit.prevent="saveDishDetails">
         <div class="modal-header dish-editor-header">
@@ -3885,6 +4162,7 @@ onUnmounted(() => {
         <div class="ingredient-editor-content">
           <div class="ingredient-editor-icon"><PhLeaf :size="34" /></div>
           <label class="field-label"><span>Nombre del ingrediente *</span><input v-model="ingredientDetailDraft.name" maxlength="190" required /></label>
+          <label class="field-label"><span>Supermercado</span><span class="supermarket-select ingredient-editor-supermarket-select"><img :class="{ 'supermarket-logo-dark': isDarkSupermarketLogo(ingredientEditorSupermarket) }" :src="supermarketLogo(ingredientEditorSupermarket)" :alt="`Logo de ${ingredientEditorSupermarket?.name || 'supermercado'}`" /><select v-model.number="ingredientDetailDraft.supermarket_id" aria-label="Supermercado del ingrediente"><option value="0">{{ group?.default_supermarket?.name || 'Del grupo' }}</option><option v-for="supermarket in supermarkets" :key="supermarket.id" :value="supermarket.id">{{ supermarket.name }}</option></select></span><small class="field-help">Si eliges «Del grupo», usará el supermercado por defecto del grupo.</small></label>
           <label class="ingredient-editor-check"><input v-model="ingredientDetailDraft.exclude_from_shopping" type="checkbox" /><span><strong>No añadir a la lista de la compra</strong><small>Este ingrediente seguirá disponible en tus platos, pero no se propondrá al generar compras.</small></span></label>
         </div>
         <div class="modal-footer ingredient-editor-footer"><button type="button" class="secondary-button" :disabled="ingredientEditorSaving" @click="closeIngredientEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="ingredientEditorSaving">{{ ingredientEditorSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
@@ -4030,7 +4308,10 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-        <div class="editor-scroll">
+        <div
+          class="editor-scroll"
+          :class="`meal-count-${enabledMeals.length}`"
+        >
           <section
             v-if="dailyOptions.filter((option) => option.active).length"
             class="editor-options"
@@ -4626,6 +4907,20 @@ onUnmounted(() => {
             <span v-if="isGroupOwner" class="owner-pill">Propietario</span>
           </div>
           <p class="muted">Comparte este código para planificar juntos.</p>
+          <form v-if="group" class="group-supermarket-card" @submit.prevent="saveGroupSupermarket">
+            <div class="group-supermarket-copy">
+              <p class="eyebrow">COMPRA</p>
+              <h4>Supermercado por defecto</h4>
+              <span>{{ isGroupOwner ? 'Los ingredientes usarán este supermercado salvo que les asignes otro.' : 'Los ingredientes del grupo parten de este supermercado.' }}</span>
+            </div>
+            <label class="supermarket-select group-supermarket-select">
+              <img :class="{ 'supermarket-logo-dark': isDarkSupermarketLogo(group.default_supermarket) }" :src="supermarketLogo(group.default_supermarket)" :alt="`Logo de ${group.default_supermarket?.name || 'supermercado'}`" />
+              <select v-model.number="group.default_supermarket_id" :disabled="!isGroupOwner" aria-label="Supermercado por defecto del grupo">
+                <option v-for="supermarket in supermarkets" :key="supermarket.id" :value="supermarket.id">{{ supermarket.name }}</option>
+              </select>
+            </label>
+            <button v-if="isGroupOwner" type="submit" class="secondary-button" :disabled="saving">Guardar</button>
+          </form>
           <div class="group-code">
             <code>{{ group.invite_code }}</code
             ><button class="secondary-button" @click="copyInviteLink">Copiar enlace</button>

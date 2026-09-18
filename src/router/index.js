@@ -10,6 +10,7 @@ const router = createRouter({
     { path: '/tuppers', name: 'tuppers' },
     { path: '/compra', name: 'shopping' },
     { path: '/calendario', name: 'calendar' },
+    { path: '/tareas', name: 'tasks' },
     { path: '/ajustes', name: 'settings' },
     { path: '/compartir/:token', name: 'shared-day' },
     { path: '/:pathMatch(.*)*', redirect: '/' },
