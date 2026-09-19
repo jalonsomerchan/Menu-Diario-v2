@@ -15,7 +15,9 @@
   "dependencies": {
     "@fullcalendar/vue3": "^7.1.0",
     "@phosphor-icons/vue": "^2.2.1",
+    "jquery": "^4.0.0",
     "pinia": "^4.0.2",
+    "select2": "^4.1.0",
     "temporal-polyfill": "^1.0.5",
     "vue": "^3.5.40",
     "vue-router": "^5.2.0"

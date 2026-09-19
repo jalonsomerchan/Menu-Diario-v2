@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
+import 'select2/dist/css/select2.css'
 import './styles.css'
 import './usability.css'
 import { registerServiceWorker } from './pwa'

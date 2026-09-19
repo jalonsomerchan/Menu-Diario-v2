@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import $ from 'jquery'
+import select2 from 'select2'
 import { vModal } from './directives/modal'
 import {
   PhAlarm,
@@ -64,6 +66,53 @@ import {
   signInWithGoogle,
   signOut,
 } from './lib/firebase'
+
+// Select2 keeps the familiar search-and-create flow of the old datalists while
+// providing a reliable picker on touch devices.
+select2(window, $)
+
+const select2Instances = new WeakMap()
+const select2Language = {
+  noResults: () => 'No hay coincidencias',
+  searching: () => 'Buscando…',
+}
+
+const vSelect2 = {
+  mounted(element, binding) {
+    const $element = $(element)
+    const instance = {
+      $element,
+      state: binding.value,
+      change: null,
+    }
+    instance.change = () => instance.state.onChange($element.val() || '')
+    $element.select2({
+      tags: true,
+      width: '100%',
+      placeholder: instance.state.placeholder,
+      dropdownParent: $element.closest('.modal-card'),
+      language: select2Language,
+    })
+    $element.on('change.select2-menu-diario', instance.change)
+    $element.val(instance.state.value || null).trigger('change.select2')
+    select2Instances.set(element, instance)
+  },
+  updated(element, binding) {
+    const instance = select2Instances.get(element)
+    if (!instance) return
+    instance.state = binding.value
+    const nextValue = binding.value.value || null
+    if (($.trim(instance.$element.val() || '') || null) !== nextValue)
+      instance.$element.val(nextValue).trigger('change.select2')
+  },
+  unmounted(element) {
+    const instance = select2Instances.get(element)
+    if (!instance) return
+    instance.$element.off('change.select2-menu-diario', instance.change)
+    instance.$element.select2('destroy')
+    select2Instances.delete(element)
+  },
+}
 
 const mealLabels = { breakfast: 'Desayuno', lunch: 'Comida', dinner: 'Cena' }
 const dishTypes = [
@@ -2059,6 +2108,12 @@ function normalizeDishName(name) {
     .toLocaleLowerCase('es')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+}
+function hasDishSuggestion(name) {
+  return dishes.value.some((dish) => String(dish.name) === String(name))
+}
+function hasIngredientSuggestion(name) {
+  return ingredientCatalog.value.some((ingredient) => String(ingredient.name) === String(name))
 }
 function loadedRouletteUsedNames() {
   const used = new Set()
@@ -4176,7 +4231,7 @@ onUnmounted(() => {
             <div class="dish-tab-intro"><div><span class="field-kicker">INGREDIENTES</span><h3>Lo que necesitas para prepararlo</h3></div><button type="button" class="secondary-button" @click="generateDishIngredients"><PhSparkle :size="17" weight="fill" /> Generar con IA</button></div>
             <p class="muted">Añádelos uno a uno; se reutilizarán en tu lista de la compra.</p>
             <div class="dish-ingredients-list">
-              <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row"><span>{{ index + 1 }}</span><input :aria-label="`Ingrediente ${index + 1}`" v-model="dishIngredientsDraft[index]" type="text" maxlength="190" list="ingredient-suggestions" placeholder="Ej.: tomate triturado" /><button type="button" class="icon-button ingredient-remove-button" :aria-label="`Eliminar ingrediente ${index + 1}`" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button></label>
+              <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row"><span>{{ index + 1 }}</span><select v-select2="{ value: dishIngredientsDraft[index], placeholder: 'Busca o escribe un ingrediente', onChange: (value) => (dishIngredientsDraft[index] = value) }" :aria-label="`Ingrediente ${index + 1}`" class="ingredient-select"><option v-if="dishIngredientsDraft[index] && !hasIngredientSuggestion(dishIngredientsDraft[index])" :value="dishIngredientsDraft[index]">{{ dishIngredientsDraft[index] }}</option><option v-for="ingredient in ingredientCatalog" :key="ingredient.id || ingredient.name" :value="ingredient.name">{{ ingredient.name }}</option></select><button type="button" class="icon-button ingredient-remove-button" :aria-label="`Eliminar ingrediente ${index + 1}`" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button></label>
             </div>
             <button type="button" class="secondary-button add-ingredient-button" @click="addDishIngredient"><PhPlus :size="17" /> Añadir ingrediente</button>
           </div>
@@ -4284,13 +4339,29 @@ onUnmounted(() => {
           <div class="dish-ingredients-list">
             <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row">
               <span>{{ index + 1 }}</span>
-              <input
-                v-model="dishIngredientsDraft[index]"
-                type="text"
-                maxlength="190"
-                list="ingredient-suggestions"
-                placeholder="Ej.: tomate triturado"
-              />
+              <select
+                v-select2="{
+                  value: dishIngredientsDraft[index],
+                  placeholder: 'Busca o escribe un ingrediente',
+                  onChange: (value) => (dishIngredientsDraft[index] = value),
+                }"
+                :aria-label="`Ingrediente ${index + 1}`"
+                class="ingredient-select"
+              >
+                <option
+                  v-if="dishIngredientsDraft[index] && !hasIngredientSuggestion(dishIngredientsDraft[index])"
+                  :value="dishIngredientsDraft[index]"
+                >
+                  {{ dishIngredientsDraft[index] }}
+                </option>
+                <option
+                  v-for="ingredient in ingredientCatalog"
+                  :key="ingredient.id || ingredient.name"
+                  :value="ingredient.name"
+                >
+                  {{ ingredient.name }}
+                </option>
+              </select>
               <button
                 type="button"
                 class="icon-button ingredient-remove-button"
@@ -4442,12 +4513,23 @@ onUnmounted(() => {
                 :key="itemIndex"
                 class="dish-input-row"
               >
-                <input
-                  v-model="draftDay.meals[meal].items[itemIndex]"
-                  list="dish-suggestions"
-                  :placeholder="`Plato para ${mealLabels[meal].toLowerCase()}`"
-                  maxlength="190"
-                /><button
+                <select
+                  v-select2="{
+                    value: draftDay.meals[meal].items[itemIndex],
+                    placeholder: `Busca o escribe un plato para ${mealLabels[meal].toLowerCase()}`,
+                    onChange: (value) => (draftDay.meals[meal].items[itemIndex] = value),
+                  }"
+                  :aria-label="`Plato para ${mealLabels[meal].toLowerCase()}`"
+                  class="dish-select"
+                >
+                  <option
+                    v-if="draftDay.meals[meal].items[itemIndex] && !hasDishSuggestion(draftDay.meals[meal].items[itemIndex])"
+                    :value="draftDay.meals[meal].items[itemIndex]"
+                  >
+                    {{ draftDay.meals[meal].items[itemIndex] }}
+                  </option>
+                  <option v-for="dish in dishes" :key="dish.id" :value="dish.name">{{ dish.name }}</option>
+                </select><button
                   class="remove-button"
                   title="Quitar plato"
                   @click="removeDish(meal, itemIndex)"
@@ -5315,11 +5397,5 @@ onUnmounted(() => {
         </div>
       </div>
     </dialog>
-    <datalist id="dish-suggestions">
-      <option v-for="dish in dishes" :key="dish.id" :value="dish.name"></option>
-    </datalist>
-    <datalist id="ingredient-suggestions">
-      <option v-for="ingredient in ingredientCatalog" :key="ingredient" :value="ingredient"></option>
-    </datalist>
   </div>
 </template>
