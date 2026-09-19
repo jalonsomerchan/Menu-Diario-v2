@@ -281,6 +281,8 @@ const rangeDays = ref(new Map())
 const dayEntries = ref([])
 const nextRangeStart = ref('')
 const loadingMore = ref(false)
+const dishesLoading = ref(false)
+const ingredientsLoading = ref(false)
 const editorOpen = ref(false)
 const saving = ref(false)
 const photoUploadingDish = ref('')
@@ -887,7 +889,7 @@ function applyContext(data) {
   supermarkets.value = data.supermarkets || supermarkets.value
 }
 
-async function fetchRange(from, to, includeContext = true) {
+async function fetchRange(from, to, includeContext = false) {
   userToken.value = await user.value.getIdToken()
   return getJson(
     `menudiario/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${includeContext ? '' : '&include_context=0'}`,
@@ -907,8 +909,9 @@ async function loadDashboardRange() {
   try {
     const rangeStart = toIsoDate(new Date())
     const rangeEnd = shiftDate(rangeStart, RANGE_PAGE_DAYS - 1)
-    const data = await fetchRange(rangeStart, rangeEnd)
-    applyContext(data)
+    const context = await loadPlannerContext()
+    const data = await fetchRange(rangeStart, rangeEnd, false)
+    applyContext(context)
     applyRangeData(data, true)
     dayEntries.value = buildRangeDayEntries(data)
     initializeShoppingSelection()
@@ -917,6 +920,67 @@ async function loadDashboardRange() {
     error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
     dashboardLoadError.value = error.value
     if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadPlannerContext() {
+  await refreshToken()
+  return getJson('menudiario/planner_context', userToken.value)
+}
+
+async function loadDishes() {
+  if (!user.value || dishesLoading.value) return
+  dishesLoading.value = true
+  loading.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await getJson('menudiario/dishes', userToken.value)
+    dishes.value = data.dishes || []
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar los platos.'
+  } finally {
+    dishesLoading.value = false
+    loading.value = false
+  }
+}
+
+async function ensureDishesLoaded() {
+  if (!dishes.value.length) await loadDishes()
+}
+
+async function loadIngredients() {
+  if (!user.value || ingredientsLoading.value) return
+  ingredientsLoading.value = true
+  loading.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await getJson('menudiario/ingredients', userToken.value)
+    dishes.value = data.dishes || dishes.value
+    ingredientCatalog.value = data.ingredients || []
+    ingredientList.value = data.ingredient_list || []
+    supermarkets.value = data.supermarkets || []
+    if (data.group) group.value = data.group
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar los ingredientes.'
+  } finally {
+    ingredientsLoading.value = false
+    loading.value = false
+  }
+}
+
+async function loadSettingsContext() {
+  if (!user.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    applyContext(await getJson('menudiario/settings_context', userToken.value))
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar los ajustes.'
   } finally {
     loading.value = false
   }
@@ -942,25 +1006,33 @@ function initializeShoppingSelection() {
 
 async function loadShoppingRange() {
   if (!user.value) return
-  if (!dayEntries.value.length) {
-    loading.value = true
-    error.value = ''
-    try {
+  loading.value = true
+  error.value = ''
+  try {
+    if (!dayEntries.value.length) {
       const rangeStart = toIsoDate(new Date())
       const rangeEnd = shiftDate(rangeStart, RANGE_PAGE_DAYS - 1)
-      const data = await fetchRange(rangeStart, rangeEnd)
-      applyContext(data)
+      const data = await fetchRange(rangeStart, rangeEnd, false)
+      const context = await loadShoppingContext()
+      applyContext(context)
       applyRangeData(data, true)
       dayEntries.value = buildRangeDayEntries(data)
       nextRangeStart.value = shiftDate(rangeEnd, 1)
-    } catch (reason) {
-      error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
-      if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
-    } finally {
-      loading.value = false
+    } else {
+      applyContext(await loadShoppingContext())
     }
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
+    if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
+  } finally {
+    loading.value = false
   }
   initializeShoppingSelection()
+}
+
+async function loadShoppingContext() {
+  await refreshToken()
+  return getJson('menudiario/ingredients', userToken.value)
 }
 
 function toggleShoppingDish(dishKey) {
@@ -1828,6 +1900,11 @@ async function logout() {
   menus.value = new Map()
   rangeDays.value = new Map()
   dayEntries.value = []
+  dishes.value = []
+  ingredientCatalog.value = []
+  ingredientList.value = []
+  group.value = null
+  dailyOptions.value = []
   nextRangeStart.value = ''
   calendarDays.value = new Map()
   globalAlerts.value = []
@@ -2047,7 +2124,8 @@ async function disconnectTelegram() {
     telegramStatusLoading.value = false
   }
 }
-function openEditor(dayKey, requestedWeek = '') {
+async function openEditor(dayKey, requestedWeek = '') {
+  await ensureDishesLoaded()
   draftDayKey.value = dayKey
   draftWeekStart.value = requestedWeek
   draftDay.value = normalizedDay(menus.value.get(requestedWeek)?.days?.[dayKey], true)
@@ -2880,6 +2958,21 @@ watch(() => route.name, async (name, previous) => {
   }
 }, { immediate: true })
 
+async function loadRouteData(name = route.name) {
+  if (!user.value) return
+  if (name === 'dashboard') await loadDashboardRange()
+  else if (name === 'dishes') await loadDishes()
+  else if (name === 'ingredients' || name === 'ingredient-merge') await loadIngredients()
+  else if (name === 'shopping') await loadShoppingRange()
+  else if (name === 'calendar') await loadCalendarMonth()
+  else if (name === 'tasks') await loadTasks()
+  else if (name === 'settings') await loadSettingsContext()
+}
+
+watch(() => route.name, (name) => {
+  if (user.value) void loadRouteData(name)
+})
+
 watch(notice, (message) => {
   if (noticeTimer) window.clearTimeout(noticeTimer)
   noticeTimer = null
@@ -2902,10 +2995,8 @@ watch(() => dishDetailDraft.type, (type) => {
   if (type === 'purchased' && dishEditorTab.value === 'ingredients') dishEditorTab.value = 'photo'
 })
 
-watch([() => route.name, calendarMonth], () => {
+watch(calendarMonth, () => {
   if (user.value && isCalendar.value) void loadCalendarMonth()
-  if (user.value && isShopping.value) void loadShoppingRange()
-  if (user.value && isTasks.value) void loadTasks()
 })
 
 onMounted(async () => {
@@ -2944,8 +3035,7 @@ onMounted(async () => {
       if (nextUser) {
         loadTuppers()
         if (inviteFromUrl) goToSettings()
-        await loadDashboardRange()
-        if (isCalendar.value) await loadCalendarMonth()
+        await loadRouteData(route.name)
       } else loading.value = false
     })
   } catch (reason) {
