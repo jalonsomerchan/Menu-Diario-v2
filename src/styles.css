@@ -3342,6 +3342,53 @@ textarea:focus,
     align-items: flex-start;
     flex-direction: column;
   }
+  .ingredient-table {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+  .ingredient-table-head {
+    display: none;
+  }
+  .ingredient-table-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'name name name'
+      'dishes usage market'
+      'shopping shopping shopping'
+      'edit stats delete';
+    gap: 0.7rem 0.6rem;
+    min-width: 0;
+    min-height: 0;
+    margin-bottom: 0.75rem;
+    padding: 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .ingredient-table-row:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+  .ingredient-name-cell { grid-area: name; }
+  .ingredient-dishes-cell { grid-area: dishes; }
+  .ingredient-usage-cell { grid-area: usage; }
+  .ingredient-supermarket-cell { grid-area: market; }
+  .ingredient-shopping-cell { grid-area: shopping; justify-items: stretch; }
+  .ingredient-shopping-cell .ingredient-shopping-toggle { width: 100%; justify-content: center; }
+  .ingredient-action-cell { justify-items: stretch; }
+  .ingredient-action-cell:nth-last-child(3) { grid-area: edit; }
+  .ingredient-action-cell:nth-last-child(2) { grid-area: stats; }
+  .ingredient-action-cell:last-child { grid-area: delete; }
+  .ingredient-action-cell .table-action-button,
+  .ingredient-action-cell .ingredient-delete-button { width: 100%; min-height: 38px; }
+  .ingredient-number-cell {
+    min-width: 3.6rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fbfcfa;
+  }
   .ingredient-editor-card,
   .ingredient-stats-card {
     padding: 1rem;

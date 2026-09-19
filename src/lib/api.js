@@ -25,7 +25,10 @@ export async function apiRequest(path, token, options = {}) {
       ...options.headers,
     },
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload = await response.json().catch((reason) => {
+    if (options.signal?.aborted) throw reason
+    return {}
+  })
   if (!response.ok || payload.ok === false) {
     const authReason = import.meta.env.DEV ? payload.details?.auth?.reason : ''
     const detail = authReason ? ` (${authReason})` : ''
@@ -41,8 +44,22 @@ export async function apiRequest(path, token, options = {}) {
   return payload.data ?? payload
 }
 
-export function getJson(path, token) {
-  return apiRequest(path, token)
+export async function getJson(path, token) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 20000)
+  try {
+    return await apiRequest(path, token, { signal: controller.signal })
+  } catch (reason) {
+    if (controller.signal.aborted) {
+      throw new ApiError('El servidor está tardando demasiado. Comprueba tu conexión y vuelve a intentarlo.', { code: 'timeout' })
+    }
+    if (reason instanceof TypeError) {
+      throw new ApiError('No se pudo conectar con el servidor. Comprueba tu conexión y vuelve a intentarlo.', { code: 'network' })
+    }
+    throw reason
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 export function postJson(path, token, body) {
   return apiRequest(path, token, { method: 'POST', body: JSON.stringify(body) })

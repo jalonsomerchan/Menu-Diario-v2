@@ -217,6 +217,19 @@ CREATE TABLE IF NOT EXISTS md_dishes (
   KEY idx_md_dishes_popularity (owner_uid, times_used)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Las fotos pertenecen al grupo: un mismo plato muestra la misma imagen a
+-- todos sus miembros, incluso si cada persona conserva su propio catálogo.
+CREATE TABLE IF NOT EXISTS md_group_dish_photos (
+  group_id BIGINT UNSIGNED NOT NULL,
+  normalized_name VARCHAR(190) NOT NULL,
+  photo_url VARCHAR(512) NOT NULL DEFAULT '',
+  photo_file VARCHAR(190) NOT NULL DEFAULT '',
+  updated_by VARCHAR(128) NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (group_id, normalized_name),
+  CONSTRAINT fk_md_group_dish_photo_group FOREIGN KEY (group_id) REFERENCES md_groups(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS md_dish_favorites (
   uid VARCHAR(128) NOT NULL,
   dish_id BIGINT UNSIGNED NOT NULL,

@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { vModal } from './directives/modal'
 import {
   PhAlarm,
   PhArrowLeft,
@@ -70,7 +71,7 @@ const dishTypes = [
   { id: 'purchased', label: 'Plato comprado' },
 ]
 const dishCategories = [
-  { id: 'cold', label: 'Plato frio' },
+  { id: 'cold', label: 'Plato frío' },
   { id: 'hot', label: 'Plato caliente' },
   { id: 'dessert', label: 'Postre' },
   { id: 'breakfast', label: 'Desayuno' },
@@ -146,7 +147,9 @@ const alertIconOptions = [
   { id: 'warning', label: 'Aviso', icon: PhWarningCircle },
 ]
 const loading = ref(true)
+const dashboardLoadError = ref('')
 const authReady = ref(false)
+const signingIn = ref(false)
 const user = ref(null)
 const error = ref('')
 const notice = ref('')
@@ -849,6 +852,7 @@ async function refreshToken() {
 
 async function loadDashboardRange() {
   if (!user.value) return
+  dashboardLoadError.value = ''
   loading.value = true
   error.value = ''
   try {
@@ -862,6 +866,7 @@ async function loadDashboardRange() {
     nextRangeStart.value = shiftDate(rangeEnd, 1)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
+    dashboardLoadError.value = error.value
     if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
   } finally {
     loading.value = false
@@ -1584,7 +1589,7 @@ async function uploadDishPhoto(event, dish) {
     })
     updateDishInCatalog(data.dish)
     if (dishEditorDish.value?.id === dish.id) dishEditorDish.value = { ...dishEditorDish.value, ...data.dish }
-    notice.value = 'Foto del plato guardada.'
+    notice.value = 'Foto del plato guardada para el grupo.'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo subir la foto del plato.'
   } finally {
@@ -1603,7 +1608,7 @@ async function removeDishPhoto(dish) {
     })
     updateDishInCatalog(data.dish)
     if (dishEditorDish.value?.id === dish.id) dishEditorDish.value = { ...dishEditorDish.value, ...data.dish }
-    notice.value = 'Foto del plato eliminada.'
+    notice.value = 'Foto del plato eliminada para el grupo.'
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo eliminar la foto del plato.'
   } finally {
@@ -1755,6 +1760,8 @@ async function toggleDishFavorite(dish) {
 }
 
 async function login() {
+  if (signingIn.value) return
+  signingIn.value = true
   error.value = ''
   try {
     const result = await signInWithGoogle()
@@ -1762,6 +1769,8 @@ async function login() {
     await postJson('auth/login', token, { id_token: token })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo iniciar sesión con Google.'
+  } finally {
+    signingIn.value = false
   }
 }
 async function logout() {
@@ -2772,6 +2781,50 @@ function dismissInstallBanner() {
   installBannerVisible.value = false
 }
 
+function focusMainContent() {
+  document.getElementById('main-content')?.focus({ preventScroll: true })
+}
+
+function dismissHeaderPanels() {
+  menuOpen.value = false
+  notificationsOpen.value = false
+}
+
+function handleHeaderEscape(event) {
+  if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return
+  const trigger = menuOpen.value ? '.menu-trigger' : notificationsOpen.value ? '.notification-trigger' : null
+  if (!trigger) return
+  dismissHeaderPanels()
+  document.querySelector(trigger)?.focus()
+}
+
+function navigateDishTabs(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]:not(:disabled)')]
+  const current = tabs.indexOf(document.activeElement)
+  if (current < 0) return
+  event.preventDefault()
+  const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+    : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+  tabs[index].click()
+  tabs[index].focus()
+}
+
+const pageTitles = {
+  dashboard: 'Planificador', dishes: 'Mis platos', ingredients: 'Ingredientes',
+  'ingredient-merge': 'Fusionar ingredientes', tuppers: 'Mis tuppers', shopping: 'Lista de la compra',
+  calendar: 'Calendario', tasks: 'Tareas', settings: 'Ajustes', 'shared-day': 'Menú compartido',
+}
+watch(() => route.name, async (name, previous) => {
+  document.title = `${pageTitles[name] || 'Planificador'} · Menu Diario`
+  dismissHeaderPanels()
+  if (previous) {
+    await nextTick()
+    focusMainContent()
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+}, { immediate: true })
+
 watch(notice, (message) => {
   if (noticeTimer) window.clearTimeout(noticeTimer)
   noticeTimer = null
@@ -2801,6 +2854,7 @@ watch([() => route.name, calendarMonth], () => {
 })
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleHeaderEscape)
   window.addEventListener('scroll', loadMoreOnScroll, { passive: true })
   isStandalone.value = isRunningStandalone()
   installPromptHandler = (event) => {
@@ -2847,6 +2901,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleHeaderEscape)
   window.removeEventListener('scroll', loadMoreOnScroll)
   if (installPromptHandler) window.removeEventListener('beforeinstallprompt', installPromptHandler)
   if (appInstalledHandler) window.removeEventListener('appinstalled', appInstalledHandler)
@@ -2857,7 +2912,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" @click="dismissHeaderPanels">
+    <a class="skip-link" href="#main-content" @click.prevent="focusMainContent">Saltar al contenido</a>
     <div
       v-if="!authReady && !isShared"
       class="app-loading-screen"
@@ -2887,7 +2943,7 @@ onUnmounted(() => {
         v-if="user"
         :href="baseUrl"
         class="brand-mark brand-link"
-        aria-label="Ir al dashboard"
+        aria-label="Ir al planificador"
         @click.prevent="goToDashboard"
       >
         <img
@@ -2912,36 +2968,37 @@ onUnmounted(() => {
           type="button"
           class="menu-trigger"
           :aria-expanded="menuOpen"
-          aria-label="Abrir menú"
-          @click.stop="menuOpen = !menuOpen"
+          :aria-label="menuOpen ? 'Cerrar menú' : 'Abrir menú'"
+          aria-controls="main-navigation"
+          @click.stop="menuOpen = !menuOpen; notificationsOpen = false"
         >
           <PhList :size="22" weight="regular" /><span>Menú</span>
         </button>
-        <div v-if="menuOpen" class="navigation-panel" @click.stop>
+        <nav v-if="menuOpen" id="main-navigation" class="navigation-panel" aria-label="Navegación principal" @click.stop>
           <button
             type="button"
-            :class="{ active: route.name === 'dashboard' }"
+            :class="{ active: route.name === 'dashboard' }" :aria-current="route.name === 'dashboard' ? 'page' : undefined"
             @click="goToDashboard"
           >
             <PhHouse :size="19" weight="regular" /><span>Planificador</span></button
-          ><button type="button" :class="{ active: isDishes }" @click="goToDishes">
+          ><button type="button" :class="{ active: isDishes }" :aria-current="isDishes ? 'page' : undefined" @click="goToDishes">
             <PhForkKnife :size="19" weight="regular" /><span>Mis platos</span></button
-          ><button type="button" :class="{ active: isIngredients }" @click="goToIngredients">
+          ><button type="button" :class="{ active: isIngredients }" :aria-current="isIngredients ? 'page' : undefined" @click="goToIngredients">
             <PhLeaf :size="19" weight="regular" /><span>Ingredientes</span></button
-          ><button type="button" :class="{ active: isIngredientMerge }" @click="goToIngredientMerge">
+          ><button type="button" :class="{ active: isIngredientMerge }" :aria-current="isIngredientMerge ? 'page' : undefined" @click="goToIngredientMerge">
             <PhArrowsClockwise :size="19" weight="regular" /><span>Fusionar ingredientes</span></button
-          ><button type="button" :class="{ active: isTuppers }" @click="goToTuppers">
+          ><button type="button" :class="{ active: isTuppers }" :aria-current="isTuppers ? 'page' : undefined" @click="goToTuppers">
             <PhCookingPot :size="19" weight="regular" /><span>Mis tuppers</span></button
-          ><button type="button" :class="{ active: isShopping }" @click="goToShopping">
+          ><button type="button" :class="{ active: isShopping }" :aria-current="isShopping ? 'page' : undefined" @click="goToShopping">
             <PhShoppingCart :size="19" weight="regular" /><span>Lista de la compra</span></button
-          ><button type="button" :class="{ active: isCalendar }" @click="goToCalendar">
+          ><button type="button" :class="{ active: isCalendar }" :aria-current="isCalendar ? 'page' : undefined" @click="goToCalendar">
             <PhCalendarBlank :size="19" weight="regular" /><span>Calendario</span></button
-          ><button type="button" :class="{ active: isTasks }" @click="goToTasks">
+          ><button type="button" :class="{ active: isTasks }" :aria-current="isTasks ? 'page' : undefined" @click="goToTasks">
             <PhListChecks :size="19" weight="regular" /><span>Tareas</span></button
-          ><button type="button" :class="{ active: isSettings }" @click="goToSettings">
+          ><button type="button" :class="{ active: isSettings }" :aria-current="isSettings ? 'page' : undefined" @click="goToSettings">
             <PhGear :size="19" weight="regular" /><span>Ajustes</span>
           </button>
-        </div>
+        </nav>
       </div>
       <div v-if="user" class="account-actions">
         <span class="user-name">{{ user.displayName || user.email }}</span>
@@ -2951,7 +3008,8 @@ onUnmounted(() => {
             title="Abrir notificaciones"
             aria-label="Abrir notificaciones"
             :aria-expanded="notificationsOpen"
-            @click.stop="notificationsOpen = !notificationsOpen"
+            aria-controls="notifications-panel"
+            @click.stop="notificationsOpen = !notificationsOpen; menuOpen = false"
           >
             <PhBell :size="22" weight="regular" /><span
               v-if="hasUnreadNotifications"
@@ -2959,7 +3017,7 @@ onUnmounted(() => {
               >{{ notificationUnreadCount > 99 ? '99+' : notificationUnreadCount }}</span
             >
           </button>
-          <div v-if="notificationsOpen" class="notifications-panel" @click.stop>
+          <div v-if="notificationsOpen" id="notifications-panel" class="notifications-panel" @click.stop>
             <div class="notifications-header">
               <div>
                 <strong>Notificaciones</strong
@@ -3037,7 +3095,7 @@ onUnmounted(() => {
       </button>
     </aside>
 
-    <main :class="{ 'settings-main': isSettings }">
+    <main id="main-content" tabindex="-1" :class="{ 'settings-main': isSettings }">
       <section v-if="isShared" class="shared-day-page">
         <div v-if="shareLoading" class="loading-card">
           <div class="spinner"></div>
@@ -3097,9 +3155,9 @@ onUnmounted(() => {
           Organiza desayuno, comida y cena en un vistazo. Tus platos quedan guardados y puedes
           moverlos entre días cuando cambien tus planes.
         </p>
-        <button class="google-button" @click="login">
+        <button class="google-button" :disabled="signingIn" :aria-busy="signingIn" @click="login">
           <span class="google-g"><PhGoogleLogo :size="18" weight="bold" aria-hidden="true" /></span>
-          Continuar con Google
+          {{ signingIn ? 'Abriendo Google…' : 'Continuar con Google' }}
         </button>
       </section>
 
@@ -3111,12 +3169,12 @@ onUnmounted(() => {
               <h1>Mis platos</h1>
               <p class="muted">Aquí tienes todos tus platos. Añade, edita y organízalos para crear menús a tu medida.</p>
             </div>
-            <button class="primary-button" @click="dishCreateOpen = !dishCreateOpen">
+            <button class="primary-button" :aria-expanded="dishCreateOpen" aria-controls="dish-create-form" @click="dishCreateOpen = !dishCreateOpen">
               <PhPlus :size="18" weight="regular" /> Añadir plato
             </button>
           </div>
 
-          <form v-if="dishCreateOpen" ref="dishForm" class="dish-create-form dishes-create-inline" @submit.prevent="saveDish">
+          <form v-if="dishCreateOpen" id="dish-create-form" ref="dishForm" class="dish-create-form dishes-create-inline" @submit.prevent="saveDish">
             <PhPlus :size="20" weight="regular" aria-hidden="true" />
             <input v-model="dishDraft" type="text" maxlength="190" placeholder="Ej.: Curry de garbanzos" aria-label="Nombre del nuevo plato" autofocus />
             <label class="select-field dish-create-type-field">
@@ -3172,10 +3230,11 @@ onUnmounted(() => {
             <PhForkKnife :size="34" weight="regular" />
             <h2>{{ dishSearch || dishFilter !== 'all' ? 'No hay coincidencias' : 'Tu lista está vacía' }}</h2>
             <p>{{ dishSearch || dishFilter !== 'all' ? 'Prueba con otro término o limpia los filtros.' : 'Añade tu primer plato para tenerlo siempre a mano.' }}</p>
+            <button v-if="dishSearch || dishFilter !== 'all'" type="button" class="secondary-button" @click="dishSearch = ''; dishFilter = 'all'">Limpiar búsqueda y filtros</button>
           </div>
           <div v-else class="dish-table" role="table" aria-label="Listado de platos">
             <div class="dish-table-head" role="row">
-              <span role="columnheader">Plato <small>↕</small></span>
+              <span role="columnheader">Plato</span>
               <span role="columnheader">Ingredientes</span>
               <span role="columnheader" class="dish-recipe-heading">Receta</span>
               <span role="columnheader" class="dish-action-heading">Editar</span>
@@ -3204,14 +3263,14 @@ onUnmounted(() => {
               </div>
               <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Editar ${dish.name}`" title="Editar plato" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
               <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :class="{ active: dish.is_favorite }" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
             </div>
           </div>
           <div v-if="!loading && sortedDishes.length" class="dish-pagination">
             <span>Mostrando {{ dishPageStart }}–{{ dishPageEnd }} de {{ sortedDishes.length }} platos</span>
             <div class="pagination-controls">
               <button type="button" class="pagination-button" :disabled="dishPage === 1" aria-label="Página anterior" @click="setDishPage(dishPage - 1)"><PhCaretLeft :size="17" /></button>
-              <button v-for="page in dishPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: dishPage === page }" @click="setDishPage(page)">{{ page }}</button>
+              <button v-for="page in dishPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: dishPage === page }" :aria-current="dishPage === page ? 'page' : undefined" :aria-label="`Página ${page}`" @click="setDishPage(page)">{{ page }}</button>
               <button type="button" class="pagination-button" :disabled="dishPage === dishPageCount" aria-label="Página siguiente" @click="setDishPage(dishPage + 1)"><PhCaretRight :size="17" /></button>
             </div>
           </div>
@@ -3235,17 +3294,19 @@ onUnmounted(() => {
             <label class="select-field"><span class="sr-only">Filtrar ingredientes</span><select v-model="ingredientFilter" aria-label="Filtrar ingredientes"><option value="all">Todos los ingredientes</option><option value="used">En platos</option><option value="unused">Sin platos</option><option value="excluded">No comprar</option></select><PhCaretDown :size="16" aria-hidden="true" /></label>
             <label class="select-field ingredient-sort-field"><span class="sr-only">Ordenar ingredientes</span><select v-model="ingredientSort" aria-label="Ordenar ingredientes"><option value="name">Nombre</option><option value="usage">Más utilizados</option></select><PhCaretDown :size="16" aria-hidden="true" /></label>
           </div>
-          <div v-if="!sortedIngredients.length" class="empty-state ingredients-empty-state">
+          <div v-if="loading" class="loading-card" role="status">Cargando ingredientes…</div>
+          <div v-else-if="!sortedIngredients.length" class="empty-state ingredients-empty-state">
             <PhLeaf :size="34" weight="regular" />
             <h2>{{ ingredientList.length ? 'No hay coincidencias' : 'Tu catálogo está vacío' }}</h2>
             <p>{{ ingredientList.length ? 'Prueba con otro nombre o limpia los filtros.' : 'Añade ingredientes para reutilizarlos al editar tus platos.' }}</p>
+            <button v-if="ingredientSearch || ingredientFilter !== 'all'" type="button" class="secondary-button" @click="ingredientSearch = ''; ingredientFilter = 'all'">Limpiar búsqueda y filtros</button>
           </div>
           <div v-else class="ingredient-table" role="table" aria-label="Listado de ingredientes">
-            <div class="ingredient-table-head" role="row"><span role="columnheader">Ingrediente <small>↕</small></span><span role="columnheader">Platos</span><span role="columnheader">Usos</span><span role="columnheader">Supermercado</span><span role="columnheader">Lista de la compra</span><span role="columnheader" class="ingredient-action-heading">Editar</span><span role="columnheader" class="ingredient-action-heading">Estadísticas</span><span role="columnheader" class="ingredient-action-heading" aria-label="Eliminar"></span></div>
+            <div class="ingredient-table-head" role="row"><span role="columnheader">Ingrediente</span><span role="columnheader">Platos</span><span role="columnheader">Usos</span><span role="columnheader">Supermercado</span><span role="columnheader">Lista de la compra</span><span role="columnheader" class="ingredient-action-heading">Editar</span><span role="columnheader" class="ingredient-action-heading">Estadísticas</span><span role="columnheader" class="ingredient-action-heading" aria-label="Eliminar"></span></div>
             <div v-for="ingredient in pagedIngredients" :key="ingredient.id" class="ingredient-table-row" role="row">
               <div class="ingredient-name-cell" role="cell"><span class="ingredient-table-icon"><PhLeaf :size="19" /></span><div><strong>{{ ingredient.name }}</strong><small>{{ ingredient.exclude_from_shopping ? 'Excluido de la compra' : 'Disponible para la compra' }}</small></div></div>
-              <div class="ingredient-number-cell" role="cell"><strong>{{ ingredient.dish_count || 0 }}</strong><small>{{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}</small></div>
-              <div class="ingredient-number-cell" role="cell"><strong>{{ ingredientLinkedDishes(ingredient).reduce((total, dish) => total + Number(dish.times_used || 0), 0) }}</strong><small>usos estimados</small></div>
+              <div class="ingredient-number-cell ingredient-dishes-cell" role="cell"><strong>{{ ingredient.dish_count || 0 }}</strong><small>{{ ingredient.dish_count === 1 ? 'plato' : 'platos' }}</small></div>
+              <div class="ingredient-number-cell ingredient-usage-cell" role="cell"><strong>{{ ingredientLinkedDishes(ingredient).reduce((total, dish) => total + Number(dish.times_used || 0), 0) }}</strong><small>usos estimados</small></div>
               <div class="ingredient-supermarket-cell" role="cell">
                 <span class="ingredient-supermarket-logo" :title="ingredient.supermarket?.name || 'Supermercado del grupo'">
                   <img :class="{ 'supermarket-logo-dark': isDarkSupermarketLogo(ingredient.supermarket) }" :src="supermarketLogo(ingredient.supermarket)" :alt="`Supermercado: ${ingredient.supermarket?.name || 'del grupo'}`" />
@@ -3257,7 +3318,7 @@ onUnmounted(() => {
               <div class="ingredient-action-cell" role="cell"><button type="button" class="ingredient-delete-button" :disabled="ingredientDeleting === String(ingredient.id)" :aria-label="`Quitar ${ingredient.name}`" title="Quitar del catálogo" @click="deleteIngredient(ingredient)"><PhTrash :size="18" weight="regular" /></button></div>
             </div>
           </div>
-          <div v-if="sortedIngredients.length" class="ingredient-pagination"><span>Mostrando {{ ingredientPageStart }}–{{ ingredientPageEnd }} de {{ sortedIngredients.length }} ingredientes</span><div class="pagination-controls"><button type="button" class="pagination-button" :disabled="ingredientPage === 1" aria-label="Página anterior de ingredientes" @click="setIngredientPage(ingredientPage - 1)"><PhCaretLeft :size="17" /></button><button v-for="page in ingredientPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: ingredientPage === page }" @click="setIngredientPage(page)">{{ page }}</button><button type="button" class="pagination-button" :disabled="ingredientPage === ingredientPageCount" aria-label="Página siguiente de ingredientes" @click="setIngredientPage(ingredientPage + 1)"><PhCaretRight :size="17" /></button></div></div>
+          <div v-if="sortedIngredients.length" class="ingredient-pagination"><span>Mostrando {{ ingredientPageStart }}–{{ ingredientPageEnd }} de {{ sortedIngredients.length }} ingredientes</span><div class="pagination-controls"><button type="button" class="pagination-button" :disabled="ingredientPage === 1" aria-label="Página anterior de ingredientes" @click="setIngredientPage(ingredientPage - 1)"><PhCaretLeft :size="17" /></button><button v-for="page in ingredientPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: ingredientPage === page }" :aria-current="ingredientPage === page ? 'page' : undefined" :aria-label="`Página ${page}`" @click="setIngredientPage(page)">{{ page }}</button><button type="button" class="pagination-button" :disabled="ingredientPage === ingredientPageCount" aria-label="Página siguiente de ingredientes" @click="setIngredientPage(ingredientPage + 1)"><PhCaretRight :size="17" /></button></div></div>
         </section>
         <section v-else-if="isIngredientMerge" class="ingredient-merge-page">
           <div class="page-heading ingredient-merge-page-heading">
@@ -3422,7 +3483,7 @@ onUnmounted(() => {
                 ]"
                 :key="filter.id"
                 type="button"
-                :class="{ active: tupperFilter === filter.id }"
+                :class="{ active: tupperFilter === filter.id }" :aria-pressed="tupperFilter === filter.id"
                 @click="tupperFilter = filter.id"
               >
                 {{ filter.label }}
@@ -3697,7 +3758,7 @@ onUnmounted(() => {
           </div>
           <dialog
             v-if="shoppingErrorModal"
-            open
+            v-modal="closeShoppingError"
             class="modal-backdrop shopping-error-backdrop"
             @click.self="closeShoppingError"
           >
@@ -3785,13 +3846,15 @@ onUnmounted(() => {
                   type="button"
                   class="calendar-day"
                   :class="calendarDayClass(cell)"
+                  :aria-label="`${calendarDateLabel(cell.date)}${calendarDayHasMeals(cell.day) ? ' · Con comidas planificadas' : ' · Sin comidas'}`"
+                  :aria-current="cell.isoDate === toIsoDate(new Date()) ? 'date' : undefined"
                   :disabled="!calendarDayHasMeals(cell.day)"
                   @click="openCalendarDay(cell)"
                 >
                   <span class="calendar-number">{{ cell.date.getDate() }}</span
                   ><span v-if="calendarDayHasMeals(cell.day)" class="calendar-meals"
                     ><span
-                      v-for="meal in allMeals"
+                      v-for="meal in allMeals.filter((key) => cell.day?.meals?.[key]?.items?.length)"
                       :key="meal"
                       class="calendar-meal-dot"
                       :title="mealLabels[meal]"
@@ -3821,7 +3884,7 @@ onUnmounted(() => {
           </div>
           <div class="tasks-toolbar">
             <div class="task-filters" aria-label="Filtrar tareas">
-              <button v-for="filter in [{ id: 'all', label: 'Todas' }, ...taskStatuses]" :key="filter.id" type="button" :class="{ active: taskFilter === filter.id }" @click="taskFilter = filter.id">
+              <button v-for="filter in [{ id: 'all', label: 'Todas' }, ...taskStatuses]" :key="filter.id" type="button" :class="{ active: taskFilter === filter.id }" :aria-pressed="taskFilter === filter.id" @click="taskFilter = filter.id">
                 {{ filter.label }}<span v-if="filter.id === 'pending' && pendingTaskCount">{{ pendingTaskCount }}</span>
               </button>
             </div>
@@ -3856,6 +3919,7 @@ onUnmounted(() => {
           </section>
         </section>
         <template v-else-if="isDashboard">
+          <h1 class="sr-only">Planificador de comidas</h1>
           <button v-if="pendingTaskCount" type="button" class="dashboard-task-notice" @click="goToTasks">
             <span class="dashboard-task-notice-icon"><PhListChecks :size="20" /></span>
             <span><strong>{{ pendingTaskCount }} {{ pendingTaskCount === 1 ? 'tarea pendiente' : 'tareas pendientes' }}</strong><small>Revísalas y marca las que ya estén hechas.</small></span>
@@ -3887,6 +3951,12 @@ onUnmounted(() => {
               </div>
               <span class="skeleton-edit"></span>
             </article>
+          </section>
+          <section v-else-if="dashboardLoadError" class="empty-state" role="status">
+            <PhWarningCircle :size="32" aria-hidden="true" />
+            <h2>No hemos podido cargar tu menú</h2>
+            <p>{{ dashboardLoadError }}</p>
+            <button type="button" class="primary-button" @click="loadDashboardRange">Volver a intentar</button>
           </section>
           <section v-else class="week-grid">
             <article
@@ -4010,7 +4080,7 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
-              <button class="edit-day" @click="openEditor(day.isoDate, day.weekStart)">
+              <button class="edit-day" :aria-label="`Editar menú del ${formatDay(day.date)}`" @click="openEditor(day.isoDate, day.weekStart)">
                 Editar día <PhArrowRight :size="17" weight="regular" />
               </button>
             </article>
@@ -4034,9 +4104,9 @@ onUnmounted(() => {
         </div>
         <div class="spinner" aria-hidden="true"></div>
       </section>
-    </main>
 
-    <dialog v-if="taskEditorOpen" open class="modal-backdrop" @click.self="closeTaskEditor">
+
+    <dialog v-if="taskEditorOpen" v-modal="closeTaskEditor" class="modal-backdrop" @click.self="closeTaskEditor">
       <form class="modal-card task-editor-card" @submit.prevent="saveTask()">
         <div class="modal-header">
           <div><p class="eyebrow">GESTIÓN DEL GRUPO</p><h2>{{ taskDraft.id ? 'Editar tarea' : 'Nueva tarea' }}</h2></div>
@@ -4068,7 +4138,7 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="dishEditorOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishEditor">
+    <dialog v-if="dishEditorOpen" v-modal="closeDishEditor" class="modal-backdrop dish-modal-backdrop" @click.self="closeDishEditor">
       <form class="modal-card dish-editor-card" @submit.prevent="saveDishDetails">
         <div class="modal-header dish-editor-header">
           <div>
@@ -4077,13 +4147,13 @@ onUnmounted(() => {
           </div>
           <button type="button" class="icon-button" aria-label="Cerrar editor" :disabled="dishDetailSaving" @click="closeDishEditor"><PhX :size="22" /></button>
         </div>
-        <div class="dish-editor-tabs" role="tablist" aria-label="Secciones del plato">
-          <button type="button" role="tab" :aria-selected="dishEditorTab === 'photo'" :class="{ active: dishEditorTab === 'photo' }" @click="dishEditorTab = 'photo'"><PhCamera :size="17" /> Foto</button>
-          <button type="button" role="tab" :aria-selected="dishEditorTab === 'ingredients'" :class="{ active: dishEditorTab === 'ingredients' }" :disabled="dishDetailDraft.type === 'purchased'" @click="dishEditorTab = 'ingredients'"><PhList :size="17" /> Ingredientes</button>
-          <button type="button" role="tab" :aria-selected="dishEditorTab === 'description'" :class="{ active: dishEditorTab === 'description' }" @click="dishEditorTab = 'description'"><PhNotePencil :size="17" /> Descripción</button>
-          <button type="button" role="tab" :aria-selected="dishEditorTab === 'recipe'" :class="{ active: dishEditorTab === 'recipe' }" @click="dishEditorTab = 'recipe'"><PhChefHat :size="17" /> Receta</button>
+        <div class="dish-editor-tabs" @keydown="navigateDishTabs" role="tablist" aria-label="Secciones del plato">
+          <button type="button" id="dish-tab-photo" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'photo' ? 0 : -1" :aria-selected="dishEditorTab === 'photo'" :class="{ active: dishEditorTab === 'photo' }" @click="dishEditorTab = 'photo'"><PhCamera :size="17" /> Foto</button>
+          <button type="button" id="dish-tab-ingredients" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'ingredients' ? 0 : -1" :aria-selected="dishEditorTab === 'ingredients'" :class="{ active: dishEditorTab === 'ingredients' }" :disabled="dishDetailDraft.type === 'purchased'" @click="dishEditorTab = 'ingredients'"><PhList :size="17" /> Ingredientes</button>
+          <button type="button" id="dish-tab-description" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'description' ? 0 : -1" :aria-selected="dishEditorTab === 'description'" :class="{ active: dishEditorTab === 'description' }" @click="dishEditorTab = 'description'"><PhNotePencil :size="17" /> Descripción</button>
+          <button type="button" id="dish-tab-recipe" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'recipe' ? 0 : -1" :aria-selected="dishEditorTab === 'recipe'" :class="{ active: dishEditorTab === 'recipe' }" @click="dishEditorTab = 'recipe'"><PhChefHat :size="17" /> Receta</button>
         </div>
-        <div class="dish-editor-scroll">
+        <div id="dish-editor-panel" class="dish-editor-scroll" role="tabpanel" :aria-labelledby="`dish-tab-${dishEditorTab}`" tabindex="0">
           <div v-if="dishEditorTab === 'photo'" class="dish-editor-photo-layout">
             <div class="dish-editor-photo-column">
               <span class="field-kicker">FOTO DEL PLATO</span>
@@ -4106,7 +4176,7 @@ onUnmounted(() => {
             <div class="dish-tab-intro"><div><span class="field-kicker">INGREDIENTES</span><h3>Lo que necesitas para prepararlo</h3></div><button type="button" class="secondary-button" @click="generateDishIngredients"><PhSparkle :size="17" weight="fill" /> Generar con IA</button></div>
             <p class="muted">Añádelos uno a uno; se reutilizarán en tu lista de la compra.</p>
             <div class="dish-ingredients-list">
-              <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row"><span>{{ index + 1 }}</span><input v-model="dishIngredientsDraft[index]" type="text" maxlength="190" list="ingredient-suggestions" placeholder="Ej.: tomate triturado" /><button type="button" class="icon-button ingredient-remove-button" aria-label="Eliminar ingrediente" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button></label>
+              <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row"><span>{{ index + 1 }}</span><input :aria-label="`Ingrediente ${index + 1}`" v-model="dishIngredientsDraft[index]" type="text" maxlength="190" list="ingredient-suggestions" placeholder="Ej.: tomate triturado" /><button type="button" class="icon-button ingredient-remove-button" :aria-label="`Eliminar ingrediente ${index + 1}`" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button></label>
             </div>
             <button type="button" class="secondary-button add-ingredient-button" @click="addDishIngredient"><PhPlus :size="17" /> Añadir ingrediente</button>
           </div>
@@ -4118,7 +4188,7 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="dishStatsOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishStats">
+    <dialog v-if="dishStatsOpen" v-modal="closeDishStats" class="modal-backdrop dish-modal-backdrop" @click.self="closeDishStats">
       <section class="modal-card dish-stats-card">
         <div class="modal-header dish-stats-header">
           <div><p class="eyebrow">ANÁLISIS DEL PLATO</p><h2>{{ dishStatsDish?.name }}</h2></div>
@@ -4136,7 +4206,7 @@ onUnmounted(() => {
       </section>
     </dialog>
 
-    <dialog v-if="dishRecipeOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeDishRecipe">
+    <dialog v-if="dishRecipeOpen" v-modal="closeDishRecipe" class="modal-backdrop dish-modal-backdrop" @click.self="closeDishRecipe">
       <section class="modal-card dish-recipe-card">
         <div class="modal-header dish-recipe-header">
           <div>
@@ -4153,7 +4223,7 @@ onUnmounted(() => {
       </section>
     </dialog>
 
-    <dialog v-if="ingredientEditorOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeIngredientEditor">
+    <dialog v-if="ingredientEditorOpen" v-modal="closeIngredientEditor" class="modal-backdrop dish-modal-backdrop" @click.self="closeIngredientEditor">
       <form class="modal-card ingredient-editor-card" @submit.prevent="saveIngredientDetails">
         <div class="modal-header ingredient-editor-header">
           <div><p class="eyebrow">FICHA DEL INGREDIENTE</p><h2>Editar ingrediente</h2></div>
@@ -4169,7 +4239,7 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="ingredientStatsOpen" open class="modal-backdrop dish-modal-backdrop" @click.self="closeIngredientStats">
+    <dialog v-if="ingredientStatsOpen" v-modal="closeIngredientStats" class="modal-backdrop dish-modal-backdrop" @click.self="closeIngredientStats">
       <section class="modal-card ingredient-stats-card">
         <div class="modal-header ingredient-stats-header">
           <div><p class="eyebrow">ANÁLISIS DEL INGREDIENTE</p><h2>{{ ingredientStatsIngredient?.name }}</h2></div>
@@ -4186,7 +4256,7 @@ onUnmounted(() => {
 
     <dialog
       v-if="dishIngredientsEditorOpen"
-      open
+      v-modal="closeDishIngredients"
       class="modal-backdrop"
       @click.self="closeDishIngredients"
     >
@@ -4262,7 +4332,7 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="tupperEditorOpen" open class="modal-backdrop" @click.self="closeTupperEditor">
+    <dialog v-if="tupperEditorOpen" v-modal="closeTupperEditor" class="modal-backdrop" @click.self="closeTupperEditor">
       <form class="modal-card tupper-editor-card" @submit.prevent="saveTupper">
         <div class="modal-header">
           <div>
@@ -4293,7 +4363,7 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="editorOpen" open class="modal-backdrop" @click.self="closeEditor">
+    <dialog v-if="editorOpen" v-modal="closeEditor" class="modal-backdrop" @click.self="closeEditor">
       <div class="modal-card day-editor-card">
         <div class="modal-header">
           <div>
@@ -4570,7 +4640,7 @@ onUnmounted(() => {
 
     <dialog
       v-if="rouletteOpen"
-      open
+      v-modal="closeRoulette"
       class="modal-backdrop roulette-backdrop"
       @click.self="closeRoulette"
     >
@@ -4665,6 +4735,7 @@ onUnmounted(() => {
         </p>
       </div>
     </dialog>
+
 
     <section v-if="user && isSettings" class="settings-page">
       <div class="page-heading settings-page-heading">
@@ -4926,7 +4997,7 @@ onUnmounted(() => {
             ><button class="secondary-button" @click="copyInviteLink">Copiar enlace</button>
           </div>
           <form v-if="isGroupOwner" class="inline-form" @submit.prevent="inviteMember">
-            <input v-model="inviteEmail" type="email" placeholder="Email para invitar" /><button
+            <input v-model="inviteEmail" aria-label="Correo electrónico de la persona a invitar" autocomplete="email" type="email" placeholder="Email para invitar" /><button
               class="secondary-button"
               :disabled="saving"
             >
@@ -4941,7 +5012,7 @@ onUnmounted(() => {
             >
           </div>
           <form class="inline-form" @submit.prevent="joinGroup">
-            <input v-model="joinCode" maxlength="8" placeholder="Código de otro grupo" /><button
+            <input v-model="joinCode" aria-label="Código de invitación al grupo" autocapitalize="characters" spellcheck="false" maxlength="8" placeholder="Código de otro grupo" /><button
               class="secondary-button"
               :disabled="saving"
             >
@@ -5158,9 +5229,11 @@ onUnmounted(() => {
       </div>
     </section>
 
+    </main>
+
     <dialog
       v-if="error && !isShopping"
-      open
+      v-modal="closeErrorModal"
       class="modal-backdrop error-backdrop"
       @click.self="closeErrorModal"
     >
@@ -5191,7 +5264,7 @@ onUnmounted(() => {
 
     <dialog
       v-if="calendarDetailOpen"
-      open
+      v-modal="() => { calendarDetailOpen = false }"
       class="modal-backdrop"
       @click.self="calendarDetailOpen = false"
     >
