@@ -4434,7 +4434,7 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="editorOpen" v-modal="closeEditor" class="modal-backdrop" @click.self="closeEditor">
+    <dialog v-if="editorOpen" v-modal="closeEditor" class="modal-backdrop day-editor-backdrop" @click.self="closeEditor">
       <div class="modal-card day-editor-card">
         <div class="modal-header">
           <div>
@@ -4532,6 +4532,7 @@ onUnmounted(() => {
                 </select><button
                   class="remove-button"
                   title="Quitar plato"
+                  :aria-label="`Quitar plato ${itemIndex + 1} de ${mealLabels[meal].toLowerCase()}`"
                   @click="removeDish(meal, itemIndex)"
                 >
                   <PhX :size="17" weight="regular" />
@@ -4543,7 +4544,7 @@ onUnmounted(() => {
                 <span class="more-options-summary-copy">
                   <span class="more-options-icon"><PhGear :size="16" weight="regular" /></span>
                   <span
-                    ><strong>Más opciones</strong
+                    ><strong>Avisos y nota</strong
                     ><small>{{ mealMoreOptionsSummary(meal) }}</small></span
                   >
                 </span>
@@ -4712,10 +4713,12 @@ onUnmounted(() => {
             <PhTelegramLogo :size="18" />
             {{ remindingGroup ? 'Enviando…' : 'Recordar al grupo' }}
           </button>
-          <button class="secondary-button" @click="closeEditor">Cancelar</button
-          ><button class="primary-button" :disabled="saving || remindingGroup" @click="saveDay">
-            {{ saving ? 'Guardando…' : 'Guardar día' }}
-          </button>
+          <div class="day-save-actions">
+            <button class="secondary-button" :disabled="saving" @click="closeEditor">Cancelar</button>
+            <button class="primary-button" :disabled="saving || remindingGroup" @click="saveDay">
+              {{ saving ? 'Guardando…' : 'Guardar día' }}
+            </button>
+          </div>
         </div>
       </div>
     </dialog>

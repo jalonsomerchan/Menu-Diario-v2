@@ -280,61 +280,117 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
   .modal-backdrop { height: -webkit-fill-available; }
 }
 
-/* On phones the day editor becomes a full-height sheet with one deliberate scroll area. */
-@media (max-width: 560px) {
-  .modal-backdrop:has(.day-editor-card) { padding: 0; }
+/* One bounded scroll region keeps the day actions visible at every viewport size. */
+.modal-backdrop.day-editor-backdrop {
+  min-height: 0;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.modal-backdrop .day-editor-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+  padding: 0;
+}
+.day-editor-card .modal-header,
+.day-editor-card .modal-footer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 1rem 1.5rem;
+}
+.day-editor-card .modal-header { align-items: center; }
+.day-editor-card .modal-header h2 {
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+.day-editor-card .editor-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scroll-padding-block: 1rem;
+  padding: 1rem 1.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+.day-editor-card .editor-scroll > * { min-width: 0; }
+.day-editor-card .modal-footer {
+  justify-content: flex-end;
+  box-shadow: 0 -8px 24px rgba(21, 38, 74, 0.06);
+}
+.day-editor-card .day-save-actions { display: flex; gap: 0.65rem; }
+.day-editor-card .modal-footer .telegram-reminder-button { margin-right: auto; }
+.day-editor-card .modal-footer button,
+.day-editor-card .roulette-trigger,
+.day-editor-card .icon-button,
+.day-editor-card .meal-add-button,
+.day-editor-card .remove-button,
+.day-editor-card .icon-choice,
+.day-editor-card .option-check { min-height: 44px; }
+.day-editor-card .remove-button { min-width: 44px; }
+.day-editor-card .meal-more-options summary { min-height: 48px; }
+.day-editor-card .meal-alert-meta { flex-wrap: wrap; }
+.day-editor-card .reminder-check { min-width: 0; }
+.day-editor-card .reminder-check strong { overflow-wrap: anywhere; }
+.day-editor-card button:not(:disabled):active { transform: scale(0.97); }
+
+@media (max-width: 760px) {
+  .day-editor-card .editor-scroll { grid-template-columns: minmax(0, 1fr); }
+  .day-editor-card .editor-meal-heading { flex-wrap: wrap; }
+  .day-editor-card .field-label > input,
+  .day-editor-card .field-label > select,
+  .day-editor-card .field-label > textarea,
+  .day-editor-card .select2-search__field { font-size: 1rem; }
+}
+
+/* A full-height sheet also covers phones rotated into landscape. */
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .modal-backdrop.day-editor-backdrop { padding: 0; }
   .modal-backdrop .day-editor-card {
-    display: flex;
-    flex-direction: column;
     width: 100%;
+    height: 100vh;
     height: 100dvh;
+    max-height: 100vh;
     max-height: 100dvh;
-    padding: 0;
-    overflow: hidden;
-    border-radius: 22px 22px 0 0;
+    border: 0;
+    border-radius: 0;
   }
   .day-editor-card .modal-header {
-    flex: 0 0 auto;
-    padding: 1rem;
-    background: var(--surface);
+    padding: max(0.75rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) 0.75rem max(1rem, env(safe-area-inset-left));
+    gap: 0.5rem;
   }
-  .day-editor-card .modal-header h2 { font-size: clamp(1.55rem, 8vw, 2.1rem); }
-  .day-editor-card .roulette-trigger {
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0.55rem;
-  }
-  .day-editor-card .roulette-trigger svg { margin: 0; }
+  .day-editor-card .modal-header h2 { font-size: 1.5rem; }
+  .day-editor-card .roulette-trigger { padding: 0.55rem; }
   .day-editor-card .editor-scroll {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    padding: 0.85rem 1rem 1rem;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    padding: 0.85rem max(1rem, env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left));
+    gap: 0.85rem;
   }
-  .day-editor-card .editor-options { padding: 0.85rem; }
+  .day-editor-card .editor-options,
+  .day-editor-card .editor-meal { padding: 0.85rem; }
   .day-editor-card .option-check-list { gap: 0.5rem; }
-  .day-editor-card .option-check { min-height: 40px; }
-  .day-editor-card .editor-meal { padding: 0.9rem; }
-  .day-editor-card .editor-meal-heading { gap: 0.55rem; }
-  .day-editor-card .meal-add-button { min-height: 44px; padding: 0.5rem; }
+  .day-editor-card .editor-section-heading { flex-wrap: wrap; }
+  .day-editor-card .meal-add-button { padding: 0.5rem; font-size: 0.8rem; }
   .day-editor-card .dish-input-row { align-items: stretch; }
-  .day-editor-card .dish-input-row .remove-button { width: 44px; min-width: 44px; min-height: 46px; }
-  .ingredient-row .ingredient-remove-button { width: 44px; height: 46px; }
   .day-editor-card .modal-footer {
-    position: relative;
-    z-index: 2;
-    flex: 0 0 auto;
-    margin: 0;
-    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
-    background: var(--surface);
-    box-shadow: 0 -10px 24px rgba(21, 38, 74, 0.08);
+    gap: 0.5rem;
+    padding: 0.65rem max(1rem, env(safe-area-inset-right)) max(0.65rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   }
-  .day-editor-card .modal-footer .secondary-button,
-  .day-editor-card .modal-footer .primary-button { min-height: 46px; }
+  .day-editor-card .day-save-actions { flex: 1 0 100%; }
+  .day-editor-card .day-save-actions button { flex: 1; justify-content: center; }
+  .day-editor-card .modal-footer .telegram-reminder-button { flex: 1 0 100%; }
+  .day-editor-card .select2-selection--single { min-height: 48px; }
+  .day-editor-card .select2-dropdown { max-height: min(48dvh, 360px); overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .day-editor-card button:not(:disabled):active { transform: none; }
+}
+
+@media (max-width: 560px) {
+  .ingredient-row .ingredient-remove-button { width: 44px; height: 46px; }
   .select2-container--default .select2-selection--single { min-height: 48px; }
   .select2-container--open .select2-dropdown { max-height: min(48dvh, 360px); overflow-y: auto; }
 }
