@@ -3446,9 +3446,9 @@ onUnmounted(() => {
                 <button v-if="dish.recipe?.trim()" type="button" class="recipe-read-button" :aria-label="`Leer receta de ${dish.name}`" @click="openDishRecipe(dish)"><PhBookOpen :size="17" /> <span>Leer receta</span></button>
                 <span v-else class="detail-empty">Sin receta</span>
               </div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Editar ${dish.name}`" title="Editar plato" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="dish.group_photo_only ? `Foto compartida de ${dish.name}` : `Editar ${dish.name}`" :title="dish.group_photo_only ? 'Foto compartida por el grupo' : 'Editar plato'" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :disabled="dish.group_photo_only" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
             </div>
           </div>
           <div v-if="!loading && sortedDishes.length" class="dish-pagination">
@@ -4350,8 +4350,8 @@ onUnmounted(() => {
               <span class="field-kicker">FOTO DEL PLATO</span>
               <a v-if="dishEditorDish?.photo_url" class="dish-editor-photo" :href="dishEditorDish.photo_url" target="_blank" rel="noreferrer"><img :src="dishEditorDish.photo_url" :alt="`Foto de ${dishEditorDish.name}`" /></a>
               <div v-else class="dish-editor-photo dish-editor-photo-empty"><PhForkKnife :size="38" /></div>
-              <label class="photo-upload-button"><PhCamera :size="17" /> {{ dishEditorDish?.photo_url ? 'Cambiar foto' : 'Subir una foto' }}<input type="file" accept="image/*" capture="environment" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin'" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
-              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish)" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
+              <label class="photo-upload-button"><PhCamera :size="17" /> {{ dishEditorDish?.photo_url ? 'Cambiar foto' : 'Subir una foto' }}<input type="file" accept="image/*" capture="environment" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
+              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish) || dishEditorDish?.group_photo_only" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
               <small class="field-help">JPG, PNG o WebP · Máximo 10 MB</small>
             </div>
             <div class="dish-editor-fields">
@@ -4361,6 +4361,7 @@ onUnmounted(() => {
               <p v-if="dishDetailDraft.type === 'purchased'" class="dish-purchased-help"><PhShoppingCart :size="17" /> Se añadirá «{{ dishDetailDraft.name }}» directamente a la lista de la compra.</p>
               <label class="dish-editor-check"><input type="checkbox" :checked="dishEditorDish?.is_favorite" disabled /> <span>Marcado como plato favorito</span></label>
               <p v-if="dishEditorDish?.source === 'admin'" class="field-help">Las fotos de las sugerencias iniciales no se pueden reemplazar.</p>
+              <p v-else-if="dishEditorDish?.group_photo_only" class="field-help">Foto compartida por otro miembro del grupo. Añade este plato a tu catálogo para poder gestionarlo.</p>
             </div>
           </div>
           <div v-else-if="dishEditorTab === 'ingredients' && dishDetailDraft.type !== 'purchased'" class="dish-editor-tab-content">
