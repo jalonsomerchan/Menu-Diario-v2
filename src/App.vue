@@ -1,15 +1,15 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import $ from 'jquery'
-import select2 from 'select2'
 import { vModal } from './directives/modal'
+import { vSelect2 } from './directives/select2'
+import AppHeader from './components/layout/AppHeader.vue'
+import AppInstallBanner from './components/layout/AppInstallBanner.vue'
+import AppLoadingScreen from './components/layout/AppLoadingScreen.vue'
 import {
-  PhAlarm,
   PhArrowLeft,
   PhArrowRight,
   PhArrowsClockwise,
-  PhBarbell,
   PhBookOpen,
   PhBell,
   PhCalendarBlank,
@@ -23,10 +23,8 @@ import {
   PhCheckCircle,
   PhChefHat,
   PhClock,
-  PhCoffee,
   PhCookingPot,
   PhDiceFive,
-  PhDownloadSimple,
   PhForkKnife,
   PhGear,
   PhGoogleLogo,
@@ -37,20 +35,14 @@ import {
   PhList,
   PhListChecks,
   PhMagnifyingGlass,
-  PhMoon,
   PhNote,
   PhNotePencil,
   PhPencilSimple,
   PhPlus,
-  PhSignOut,
   PhShoppingCart,
   PhSpeakerHigh,
-  PhSmiley,
   PhSparkle,
   PhSpinnerGap,
-  PhStar,
-  PhSun,
-  PhTag,
   PhTelegramLogo,
   PhTrash,
   PhUsers,
@@ -58,6 +50,7 @@ import {
   PhX,
 } from '@phosphor-icons/vue'
 import { ApiError, getJson, postJson, uploadFile } from './lib/api'
+import { filterAndSortDishes, filterAndSortIngredients, pagination } from './lib/catalog'
 import { formatDay, fromIsoDate, mondayOf, shiftDate, toIsoDate } from './lib/dates'
 import {
   getFirebaseAuth,
@@ -66,135 +59,10 @@ import {
   signInWithGoogle,
   signOut,
 } from './lib/firebase'
-
-// Select2 keeps the familiar search-and-create flow of the old datalists while
-// providing a reliable picker on touch devices.
-select2(window, $)
-
-const select2Instances = new WeakMap()
-const select2Language = {
-  noResults: () => 'No hay coincidencias',
-  searching: () => 'Buscando…',
-}
-
-const vSelect2 = {
-  mounted(element, binding) {
-    const $element = $(element)
-    const instance = {
-      $element,
-      state: binding.value,
-      change: null,
-    }
-    instance.change = () => instance.state.onChange($element.val() || '')
-    $element.select2({
-      tags: true,
-      width: '100%',
-      placeholder: instance.state.placeholder,
-      dropdownParent: $element.closest('.modal-card'),
-      language: select2Language,
-    })
-    $element.on('change.select2-menu-diario', instance.change)
-    $element.val(instance.state.value || null).trigger('change.select2')
-    select2Instances.set(element, instance)
-  },
-  updated(element, binding) {
-    const instance = select2Instances.get(element)
-    if (!instance) return
-    instance.state = binding.value
-    const nextValue = binding.value.value || null
-    if (($.trim(instance.$element.val() || '') || null) !== nextValue)
-      instance.$element.val(nextValue).trigger('change.select2')
-  },
-  unmounted(element) {
-    const instance = select2Instances.get(element)
-    if (!instance) return
-    instance.$element.off('change.select2-menu-diario', instance.change)
-    instance.$element.select2('destroy')
-    select2Instances.delete(element)
-  },
-}
-
-const mealLabels = { breakfast: 'Desayuno', lunch: 'Comida', dinner: 'Cena' }
-const dishTypes = [
-  { id: 'home', label: 'Plato casero' },
-  { id: 'purchased', label: 'Plato comprado' },
-]
-const dishCategories = [
-  { id: 'cold', label: 'Plato frío' },
-  { id: 'hot', label: 'Plato caliente' },
-  { id: 'dessert', label: 'Postre' },
-  { id: 'breakfast', label: 'Desayuno' },
-  { id: 'other', label: 'Otros' },
-]
-const mealIcons = { breakfast: PhCoffee, lunch: PhForkKnife, dinner: PhMoon }
-const optionIcons = {
-  note: PhNote,
-  clock: PhClock,
-  utensils: PhForkKnife,
-  kids: PhUsers,
-  training: PhBarbell,
-  'no-cook': PhCookingPot,
-  calendar: PhCalendarCheck,
-  shopping: PhShoppingCart,
-  cooking: PhChefHat,
-  leaf: PhLeaf,
-  sun: PhSun,
-  star: PhStar,
-  checklist: PhListChecks,
-  smile: PhSmiley,
-}
-const optionIconOptions = [
-  { id: 'note', label: 'Nota', icon: PhNote },
-  { id: 'clock', label: 'Reloj', icon: PhClock },
-  { id: 'utensils', label: 'Cubiertos', icon: PhForkKnife },
-  { id: 'kids', label: 'Familia', icon: PhUsers },
-  { id: 'training', label: 'Entreno', icon: PhBarbell },
-  { id: 'no-cook', label: 'Sin cocinar', icon: PhCookingPot },
-  { id: 'calendar', label: 'Calendario', icon: PhCalendarCheck },
-  { id: 'shopping', label: 'Compra', icon: PhShoppingCart },
-  { id: 'cooking', label: 'Cocinar', icon: PhChefHat },
-  { id: 'leaf', label: 'Saludable', icon: PhLeaf },
-  { id: 'sun', label: 'Día', icon: PhSun },
-  { id: 'star', label: 'Favorito', icon: PhStar },
-  { id: 'checklist', label: 'Lista', icon: PhListChecks },
-  { id: 'smile', label: 'Bienestar', icon: PhSmiley },
-]
-const allMeals = ['breakfast', 'lunch', 'dinner']
-const notificationTypes = [
-  { id: 'meal_added', label: 'Comidas añadidas' },
-  { id: 'meal_updated', label: 'Comidas modificadas' },
-  { id: 'meal_moved', label: 'Comidas movidas' },
-  { id: 'group', label: 'Actividad del grupo' },
-  { id: 'reminder', label: 'Recordatorios programados' },
-]
-const taskStatuses = [
-  { id: 'pending', label: 'Pendiente' },
-  { id: 'parked', label: 'Aparcada' },
-  { id: 'completed', label: 'Completada' },
-  { id: 'cancelled', label: 'Cancelada' },
-]
-const taskImportances = [
-  { id: 'low', label: 'Baja' },
-  { id: 'medium', label: 'Media' },
-  { id: 'high', label: 'Alta' },
-]
-const alertIconOptions = [
-  { id: 'bell', label: 'Campana', icon: PhBell },
-  { id: 'alarm', label: 'Alarma', icon: PhAlarm },
-  { id: 'clock', label: 'Reloj', icon: PhClock },
-  { id: 'calendar', label: 'Calendario', icon: PhCalendarCheck },
-  { id: 'utensils', label: 'Cubiertos', icon: PhForkKnife },
-  { id: 'cooking', label: 'Cocinar', icon: PhCookingPot },
-  { id: 'shopping', label: 'Compra', icon: PhShoppingCart },
-  { id: 'note', label: 'Nota', icon: PhNote },
-  { id: 'checklist', label: 'Lista', icon: PhListChecks },
-  { id: 'leaf', label: 'Hoja', icon: PhLeaf },
-  { id: 'sun', label: 'Día', icon: PhSun },
-  { id: 'star', label: 'Favorito', icon: PhStar },
-  { id: 'tag', label: 'Etiqueta', icon: PhTag },
-  { id: 'lightning', label: 'Rápido', icon: PhLightning },
-  { id: 'warning', label: 'Aviso', icon: PhWarningCircle },
-]
+import {
+  alertIconOptions, allMeals, dishCategories, dishTypes, mealIcons, mealLabels,
+  notificationTypes, optionIconOptions, optionIcons, taskImportances, taskStatuses,
+} from './lib/ui'
 const loading = ref(true)
 const dashboardLoadError = ref('')
 const authReady = ref(false)
@@ -441,54 +309,23 @@ const monthLabel = computed(() =>
   new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(calendarMonth.value),
 )
 const sortedDishes = computed(() => {
-  const query = dishSearch.value.trim().toLocaleLowerCase('es')
-  return [...dishes.value]
-    .filter(
-      (dish) =>
-        (!favoritesOnly.value || dish.is_favorite) &&
-        (dishFilter.value !== 'favorites' || dish.is_favorite) &&
-        (dishFilter.value !== 'with-ingredients' || dish.ingredients?.length) &&
-        (dishFilter.value !== 'used' || Number(dish.times_used || 0) > 0) &&
-        (!dishCategories.some((category) => category.id === dishFilter.value) || dishCategoryId(dish) === dishFilter.value) &&
-        (!query || `${dish.name} ${dishCategory(dish)} ${(dish.ingredients || []).join(' ')}`.toLocaleLowerCase('es').includes(query)),
-    )
-    .sort((a, b) => {
-      if (dishSort.value === 'name') return a.name.localeCompare(b.name, 'es')
-      if (dishSort.value === 'recent') return String(b.last_used_at || '').localeCompare(String(a.last_used_at || ''))
-      return Number(b.is_favorite) - Number(a.is_favorite) || Number(b.times_used || 0) - Number(a.times_used || 0) || a.name.localeCompare(b.name, 'es')
-    })
+  return filterAndSortDishes(dishes.value, { query: dishSearch.value, filter: dishFilter.value, favoritesOnly: favoritesOnly.value, sort: dishSort.value, categories: dishCategories, categoryId: dishCategoryId, categoryLabel: dishCategory })
 })
-const dishPageCount = computed(() => Math.max(1, Math.ceil(sortedDishes.value.length / dishesPerPage.value)))
-const pagedDishes = computed(() => {
-  const start = (dishPage.value - 1) * dishesPerPage.value
-  return sortedDishes.value.slice(start, start + dishesPerPage.value)
-})
-const dishPageStart = computed(() => sortedDishes.value.length ? (dishPage.value - 1) * dishesPerPage.value + 1 : 0)
-const dishPageEnd = computed(() => Math.min(dishPage.value * dishesPerPage.value, sortedDishes.value.length))
-const dishPageNumbers = computed(() => Array.from({ length: dishPageCount.value }, (_, index) => index + 1).slice(0, 5))
+const dishPagination = computed(() => pagination(sortedDishes.value, dishPage.value, dishesPerPage.value))
+const dishPageCount = computed(() => dishPagination.value.pageCount)
+const pagedDishes = computed(() => dishPagination.value.items)
+const dishPageStart = computed(() => dishPagination.value.first)
+const dishPageEnd = computed(() => dishPagination.value.last)
+const dishPageNumbers = computed(() => dishPagination.value.pages)
 const sortedIngredients = computed(() => {
-  const query = ingredientSearch.value.trim().toLocaleLowerCase('es')
-  return [...ingredientList.value]
-    .filter((ingredient) => {
-      const dishCount = Number(ingredient.dish_count || 0)
-      if (ingredientFilter.value === 'used' && dishCount === 0) return false
-      if (ingredientFilter.value === 'unused' && dishCount > 0) return false
-      if (ingredientFilter.value === 'excluded' && !ingredient.exclude_from_shopping) return false
-      return !query || ingredient.name.toLocaleLowerCase('es').includes(query)
-    })
-    .sort((a, b) => {
-      if (ingredientSort.value === 'usage') return Number(b.dish_count || 0) - Number(a.dish_count || 0) || a.name.localeCompare(b.name, 'es')
-      return a.name.localeCompare(b.name, 'es')
-    })
+  return filterAndSortIngredients(ingredientList.value, { query: ingredientSearch.value, filter: ingredientFilter.value, sort: ingredientSort.value })
 })
-const ingredientPageCount = computed(() => Math.max(1, Math.ceil(sortedIngredients.value.length / ingredientsPerPage.value)))
-const pagedIngredients = computed(() => {
-  const start = (ingredientPage.value - 1) * ingredientsPerPage.value
-  return sortedIngredients.value.slice(start, start + ingredientsPerPage.value)
-})
-const ingredientPageStart = computed(() => sortedIngredients.value.length ? (ingredientPage.value - 1) * ingredientsPerPage.value + 1 : 0)
-const ingredientPageEnd = computed(() => Math.min(ingredientPage.value * ingredientsPerPage.value, sortedIngredients.value.length))
-const ingredientPageNumbers = computed(() => Array.from({ length: ingredientPageCount.value }, (_, index) => index + 1).slice(0, 5))
+const ingredientPagination = computed(() => pagination(sortedIngredients.value, ingredientPage.value, ingredientsPerPage.value))
+const ingredientPageCount = computed(() => ingredientPagination.value.pageCount)
+const pagedIngredients = computed(() => ingredientPagination.value.items)
+const ingredientPageStart = computed(() => ingredientPagination.value.first)
+const ingredientPageEnd = computed(() => ingredientPagination.value.last)
+const ingredientPageNumbers = computed(() => ingredientPagination.value.pages)
 const filteredMergeIngredients = computed(() => {
   const query = ingredientMergeSearch.value.trim().toLocaleLowerCase('es')
   return ingredientList.value.filter(
@@ -2931,6 +2768,21 @@ function goToTasks() {
   router.push({ name: 'tasks' })
 }
 
+function navigateTo(name) {
+  const routes = {
+    dashboard: goToDashboard,
+    dishes: goToDishes,
+    ingredients: goToIngredients,
+    'ingredient-merge': goToIngredientMerge,
+    tuppers: goToTuppers,
+    shopping: goToShopping,
+    calendar: goToCalendar,
+    tasks: goToTasks,
+    settings: goToSettings,
+  }
+  routes[name]?.()
+}
+
 function isRunningStandalone() {
   return (
     window.matchMedia?.('(display-mode: standalone)').matches ||
@@ -3099,30 +2951,25 @@ onUnmounted(() => {
 <template>
   <div class="app-shell" @click="dismissHeaderPanels">
     <a class="skip-link" href="#main-content" @click.prevent="focusMainContent">Saltar al contenido</a>
-    <div
-      v-if="!authReady && !isShared"
-      class="app-loading-screen"
-      role="status"
-      aria-live="polite"
-      aria-label="Cargando Menu Diario"
-    >
-      <div class="app-loading-content">
-        <div class="app-loading-logo-wrap">
-          <img
-            class="loading-logo"
-            :src="publicAsset('icons/menu-diario-144.png')"
-            alt=""
-            aria-hidden="true"
-          />
-          <span class="app-loading-pulse" aria-hidden="true"></span>
-        </div>
-        <div class="loading-copy">
-          <strong>Menu Diario</strong>
-          <span>Preparando tu planificador…</span>
-        </div>
-        <div class="loading-progress" aria-hidden="true"><span></span></div>
-      </div>
-    </div>
+    <AppLoadingScreen :visible="!authReady && !isShared" :asset="publicAsset" />
+    <AppHeader
+      :user="user"
+      :base-url="baseUrl"
+      :asset="publicAsset"
+      :route-name="route.name"
+      :menu-open="menuOpen"
+      :notifications-open="notificationsOpen"
+      :notifications="notifications"
+      :unread-count="notificationUnreadCount"
+      :format-notification-date="formatNotificationDate"
+      @navigate="navigateTo"
+      @toggle-menu="menuOpen = !menuOpen; notificationsOpen = false"
+      @toggle-notifications="notificationsOpen = !notificationsOpen; menuOpen = false"
+      @mark-all-read="markAllNotificationsRead"
+      @mark-read="markNotificationRead"
+      @logout="logout"
+    />
+    <!--
     <header class="topbar">
       <a
         v-if="user"
@@ -3254,14 +3101,20 @@ onUnmounted(() => {
           <PhSignOut :size="22" weight="regular" />
         </button>
       </div>
-    </header>
+    </header>-->
 
     <div v-if="notice" class="snackbar" role="status" aria-live="polite">
       <PhCheckCircle :size="20" weight="fill" aria-hidden="true" />
       <span>{{ notice }}</span>
     </div>
 
-    <aside v-if="installBannerVisible && !isStandalone" class="install-banner" aria-live="polite">
+    <AppInstallBanner
+      :visible="installBannerVisible && !isStandalone"
+      :asset="publicAsset"
+      @install="installApp"
+      @dismiss="dismissInstallBanner"
+    />
+    <!-- <aside v-if="installBannerVisible && !isStandalone" class="install-banner" aria-live="polite">
       <img :src="publicAsset('icons/menu-diario-96.png')" alt="" aria-hidden="true" />
       <div>
         <strong>Instala Menu Diario</strong>
@@ -3278,7 +3131,7 @@ onUnmounted(() => {
       >
         <PhX :size="20" />
       </button>
-    </aside>
+    </aside> -->
 
     <main id="main-content" tabindex="-1" :class="{ 'settings-main': isSettings }">
       <section v-if="isShared" class="shared-day-page">
