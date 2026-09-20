@@ -398,6 +398,7 @@ let noticeTimer = null
 let installPromptHandler = null
 let appInstalledHandler = null
 let lastPlannerDishTap = { name: '', timestamp: 0 }
+let dishesLoadPromise = null
 
 const enabledMeals = computed(() =>
   preferences.enabled_meals.length ? preferences.enabled_meals : ['lunch'],
@@ -932,20 +933,25 @@ async function loadPlannerContext() {
 }
 
 async function loadDishes() {
-  if (!user.value || dishesLoading.value) return
+  if (!user.value) return
+  if (dishesLoadPromise) return dishesLoadPromise
   dishesLoading.value = true
   loading.value = true
   error.value = ''
-  try {
-    await refreshToken()
-    const data = await getJson('menudiario/dishes', userToken.value)
-    dishes.value = data.dishes || []
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar los platos.'
-  } finally {
-    dishesLoading.value = false
-    loading.value = false
-  }
+  dishesLoadPromise = (async () => {
+    try {
+      await refreshToken()
+      const data = await getJson('menudiario/dishes', userToken.value)
+      dishes.value = data.dishes || []
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar los platos.'
+    } finally {
+      dishesLoading.value = false
+      loading.value = false
+      dishesLoadPromise = null
+    }
+  })()
+  return dishesLoadPromise
 }
 
 async function ensureDishesLoaded() {
@@ -1345,10 +1351,18 @@ function openDishEditor(dish) {
   dishEditorTab.value = 'photo'
   dishEditorOpen.value = true
 }
-function openPlannerDish(dishName) {
-  const dish = dishes.value.find(
+async function openPlannerDish(dishName) {
+  let dish = dishes.value.find(
     (item) => normalizeDishName(item.name) === normalizeDishName(dishName),
   )
+  // El planificador puede mostrarse antes de que su contexto incluya el catálogo.
+  // Esperamos la carga compartida y buscamos de nuevo antes de informar de un fallo.
+  if (!dish) {
+    await ensureDishesLoaded()
+    dish = dishes.value.find(
+      (item) => normalizeDishName(item.name) === normalizeDishName(dishName),
+    )
+  }
   if (!dish) {
     notice.value = 'No hemos encontrado la ficha de este plato.'
     window.setTimeout(() => {
