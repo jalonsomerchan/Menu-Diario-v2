@@ -397,6 +397,7 @@ let rouletteTimer = null
 let noticeTimer = null
 let installPromptHandler = null
 let appInstalledHandler = null
+let lastPlannerDishTap = { name: '', timestamp: 0 }
 
 const enabledMeals = computed(() =>
   preferences.enabled_meals.length ? preferences.enabled_meals : ['lunch'],
@@ -1343,6 +1344,31 @@ function openDishEditor(dish) {
   dishIngredientsDraft.value = dish.ingredients?.length ? [...dish.ingredients] : ['']
   dishEditorTab.value = 'photo'
   dishEditorOpen.value = true
+}
+function openPlannerDish(dishName) {
+  const dish = dishes.value.find(
+    (item) => normalizeDishName(item.name) === normalizeDishName(dishName),
+  )
+  if (!dish) {
+    notice.value = 'No hemos encontrado la ficha de este plato.'
+    window.setTimeout(() => {
+      notice.value = ''
+    }, 2500)
+    return
+  }
+  openDishEditor(dish)
+}
+function handlePlannerDishTouch(dishName) {
+  const timestamp = Date.now()
+  if (
+    lastPlannerDishTap.name === dishName &&
+    timestamp - lastPlannerDishTap.timestamp <= 350
+  ) {
+    lastPlannerDishTap = { name: '', timestamp: 0 }
+    openPlannerDish(dishName)
+    return
+  }
+  lastPlannerDishTap = { name: dishName, timestamp }
 }
 function closeDishEditor() {
   if (dishDetailSaving.value) return
@@ -4193,11 +4219,17 @@ onUnmounted(() => {
                         :key="dish"
                         class="dish-chip"
                         draggable="true"
-                        :title="`Arrastra ${dish} a otro día`"
+                        role="button"
+                        tabindex="0"
+                        :title="`Arrastra ${dish} a otro día. Haz doble clic o doble toque para abrir su ficha.`"
                         @dragstart.stop="
                           startDishDrag($event, day.isoDate, meal, dish, day.weekStart)
                         "
                         @dragend="clearDishDrag"
+                        @dblclick.stop="openPlannerDish(dish)"
+                        @touchend.stop="handlePlannerDishTouch(dish)"
+                        @keydown.enter.stop="openPlannerDish(dish)"
+                        @keydown.space.prevent.stop="openPlannerDish(dish)"
                         >{{ dish }}</span
                       >
                     </div>

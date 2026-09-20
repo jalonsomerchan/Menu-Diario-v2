@@ -2713,16 +2713,40 @@ h2 {
   margin-top: 0.18rem;
 }
 .dish-chip {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.55rem;
   overflow: hidden;
   color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #fff;
   cursor: grab;
   font-size: 0.94rem;
   font-weight: 700;
   line-height: 1.28;
   text-overflow: ellipsis;
+  touch-action: manipulation;
+  user-select: none;
+  transition: background-color 150ms ease, border-color 150ms ease, transform 100ms ease-out;
+}
+.dish-chip:hover {
+  border-color: #c9dced;
+  background: #f8fbff;
+}
+.dish-chip:focus-visible {
+  outline: 3px solid rgba(57, 137, 205, 0.35);
+  outline-offset: 2px;
 }
 .dish-chip:active {
   cursor: grabbing;
+  transform: scale(0.98);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dish-chip { transition: background-color 150ms ease, border-color 150ms ease; }
+  .dish-chip:active { transform: none; }
 }
 .meal-card.drop-target {
   background: var(--soft-blue);
