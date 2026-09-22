@@ -304,6 +304,19 @@ const isCalendar = computed(() => route.name === 'calendar')
 const isTasks = computed(() => route.name === 'tasks')
 const isShared = computed(() => route.name === 'shared-day')
 const isDashboard = computed(() => route.name === 'dashboard')
+const loadingMessage = computed(() => {
+  const messages = {
+    dashboard: 'Cargando tu menú…',
+    dishes: 'Cargando tus platos…',
+    ingredients: 'Cargando ingredientes…',
+    'ingredient-merge': 'Cargando ingredientes…',
+    shopping: 'Cargando la lista de la compra…',
+    calendar: 'Cargando el calendario…',
+    settings: 'Cargando tus ajustes…',
+  }
+  return messages[route.name] || 'Cargando…'
+})
+const dataLoading = computed(() => loading.value || (isCalendar.value && calendarLoading.value))
 const filteredTasks = computed(() => {
   if (taskFilter.value === 'all') return tasks.value
   return tasks.value.filter((task) => task.status === taskFilter.value)
@@ -835,6 +848,8 @@ async function loadSettingsContext() {
 
 async function loadTasks() {
   if (!user.value) return
+  loading.value = true
+  error.value = ''
   try {
     await refreshToken()
     const data = await getJson('menudiario/tasks', userToken.value)
@@ -842,6 +857,8 @@ async function loadTasks() {
     pendingTaskCount.value = Number(data.pending_task_count || 0)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudieron cargar las tareas.'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -3025,6 +3042,17 @@ onUnmounted(() => {
       @mark-read="markNotificationRead"
       @logout="logout"
     />
+    <div
+      v-if="dataLoading && authReady && user && !isShared"
+      class="global-loading-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label="Cargando datos"
+    >
+      <span class="spinner" aria-hidden="true"></span>
+      <span>{{ loadingMessage }}</span>
+      <span class="global-loading-track" aria-hidden="true"><span></span></span>
+    </div>
     <!--
     <header class="topbar">
       <a
@@ -3189,7 +3217,12 @@ onUnmounted(() => {
       </button>
     </aside> -->
 
-    <main id="main-content" tabindex="-1" :class="{ 'settings-main': isSettings }">
+    <main
+      id="main-content"
+      tabindex="-1"
+      :class="{ 'settings-main': isSettings }"
+      :aria-busy="dataLoading ? 'true' : 'false'"
+    >
       <section v-if="isShared" class="shared-day-page">
         <div v-if="shareLoading" class="loading-card">
           <div class="spinner"></div>
@@ -3983,7 +4016,11 @@ onUnmounted(() => {
               </button>
             </div>
           </div>
-          <div v-if="!filteredTasks.length" class="empty-state tasks-empty-state">
+          <div v-if="loading" class="loading-card tasks-loading-card" role="status">
+            <span class="spinner" aria-hidden="true"></span>
+            Cargando tareas…
+          </div>
+          <div v-else-if="!filteredTasks.length" class="empty-state tasks-empty-state">
             <PhListChecks :size="38" weight="regular" />
             <h2>{{ taskFilter === 'all' ? 'Aún no hay tareas' : 'No hay tareas en este estado' }}</h2>
             <p>{{ taskFilter === 'all' ? 'Crea la primera y comparte la organización con tu grupo.' : 'Prueba otro filtro o crea una tarea nueva.' }}</p>
@@ -4257,10 +4294,17 @@ onUnmounted(() => {
           <div v-if="dishEditorTab === 'photo'" class="dish-editor-photo-layout">
             <div class="dish-editor-photo-column">
               <span class="field-kicker">FOTO DEL PLATO</span>
-              <a v-if="dishEditorDish?.photo_url" class="dish-editor-photo" :href="dishEditorDish.photo_url" target="_blank" rel="noreferrer"><img :src="dishEditorDish.photo_url" :alt="`Foto de ${dishEditorDish.name}`" /></a>
-              <div v-else class="dish-editor-photo dish-editor-photo-empty"><PhForkKnife :size="38" /></div>
-              <label class="photo-upload-button"><PhCamera :size="17" /> {{ dishEditorDish?.photo_url ? 'Cambiar foto' : 'Subir una foto' }}<input type="file" accept="image/*" capture="environment" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
-              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish) || dishEditorDish?.group_photo_only" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
+              <div class="dish-editor-photo-shell" :class="{ uploading: Boolean(photoUploadingDish) }" :aria-busy="photoUploadingDish ? 'true' : 'false'">
+                <a v-if="dishEditorDish?.photo_url" class="dish-editor-photo" :href="dishEditorDish.photo_url" target="_blank" rel="noreferrer"><img :src="dishEditorDish.photo_url" :alt="`Foto de ${dishEditorDish.name}`" /></a>
+                <div v-else class="dish-editor-photo dish-editor-photo-empty"><PhForkKnife :size="38" /></div>
+                <div v-if="photoUploadingDish" class="dish-photo-upload-overlay" role="status" aria-live="polite">
+                  <span class="spinner" aria-hidden="true"></span>
+                  <strong>Subiendo foto…</strong>
+                  <small>No cierres esta ventana</small>
+                </div>
+              </div>
+              <label class="photo-upload-button" :class="{ uploading: Boolean(photoUploadingDish) }"><PhSpinnerGap v-if="photoUploadingDish" :size="17" class="spin-icon" /><PhCamera v-else :size="17" /> {{ photoUploadingDish ? 'Subiendo foto…' : (dishEditorDish?.photo_url ? 'Cambiar foto' : 'Subir una foto') }}<input type="file" accept="image/*" capture="environment" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
+              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish) || Boolean(photoUploadingDish) || dishEditorDish?.group_photo_only" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
               <small class="field-help">JPG, PNG o WebP · Máximo 10 MB</small>
             </div>
             <div class="dish-editor-fields">
