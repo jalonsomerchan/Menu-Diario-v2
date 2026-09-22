@@ -1389,6 +1389,12 @@ function editDishFromStats() {
   closeDishStats()
   if (dish) openDishEditor(dish)
 }
+function rateDishFromEditor() {
+  const dish = dishEditorDish.value
+  if (!dish) return
+  closeDishEditor()
+  void openDishStats(dish)
+}
 function setDishPage(page) {
   dishPage.value = Math.min(Math.max(1, page), dishPageCount.value)
 }
@@ -3365,7 +3371,7 @@ onUnmounted(() => {
               <span role="columnheader">Ingredientes</span>
               <span role="columnheader" class="dish-recipe-heading">Receta</span>
               <span role="columnheader" class="dish-action-heading">Editar</span>
-              <span role="columnheader" class="dish-action-heading">Estadísticas</span>
+              <span role="columnheader" class="dish-action-heading">Valorar</span>
               <span role="columnheader" class="dish-favorite-heading" aria-label="Favorito"><PhHeart :size="20" /></span>
             </div>
             <div v-for="dish in pagedDishes" :key="dish.id" class="dish-table-row" role="row">
@@ -3389,7 +3395,7 @@ onUnmounted(() => {
                 <span v-else class="detail-empty">Sin receta</span>
               </div>
               <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="dish.group_photo_only ? `Foto compartida de ${dish.name}` : `Editar ${dish.name}`" :title="dish.group_photo_only ? 'Foto compartida por el grupo' : 'Editar plato'" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button dish-rating-action-button" :class="{ active: Number(dish.my_rating) > 0 }" :disabled="dish.group_photo_only" :aria-label="`Valorar ${dish.name}`" title="Ver estadísticas y valorar" @click="openDishStats(dish)"><PhStar :size="19" :weight="Number(dish.my_rating) > 0 ? 'fill' : 'regular'" /></button></div>
               <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :disabled="dish.group_photo_only" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
             </div>
           </div>
@@ -4329,7 +4335,7 @@ onUnmounted(() => {
           <div v-else-if="dishEditorTab === 'description'" class="dish-editor-tab-content"><label class="field-label"><span>Descripción breve</span><textarea v-model="dishDetailDraft.description" rows="8" maxlength="1000" placeholder="Cuenta qué hace especial a este plato, cuándo sueles prepararlo o con qué acompañarlo."></textarea></label><p class="field-help">Una frase clara ayuda a elegirlo cuando estés planificando la semana.</p></div>
           <div v-else class="dish-editor-tab-content"><label class="field-label"><span>Receta</span><textarea v-model="dishDetailDraft.recipe" rows="12" maxlength="5000" placeholder="1. Prepara los ingredientes…\n2. Cocina a fuego medio…\n3. Sirve y disfruta."></textarea></label><p class="field-help">Puedes escribir pasos, tiempos y trucos de cocina.</p></div>
         </div>
-        <div class="modal-footer dish-editor-footer"><button type="button" class="secondary-button" :disabled="dishDetailSaving" @click="closeDishEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="dishDetailSaving">{{ dishDetailSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
+        <div class="modal-footer dish-editor-footer"><button type="button" class="secondary-button dish-rate-button" :disabled="dishDetailSaving || Boolean(photoUploadingDish)" @click="rateDishFromEditor"><PhStar :size="17" /> Valorar plato</button><button type="button" class="secondary-button" :disabled="dishDetailSaving" @click="closeDishEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="dishDetailSaving">{{ dishDetailSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
       </form>
     </dialog>
 
