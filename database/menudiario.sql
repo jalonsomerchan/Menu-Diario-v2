@@ -239,6 +239,18 @@ CREATE TABLE IF NOT EXISTS md_dish_favorites (
   CONSTRAINT fk_md_favorite_dish FOREIGN KEY (dish_id) REFERENCES md_dishes(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS md_dish_ratings (
+  group_id BIGINT UNSIGNED NOT NULL,
+  normalized_name VARCHAR(190) NOT NULL,
+  uid VARCHAR(128) NOT NULL,
+  rating TINYINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (group_id, normalized_name, uid),
+  KEY idx_md_dish_ratings_dish (group_id, normalized_name),
+  CONSTRAINT fk_md_dish_ratings_group FOREIGN KEY (group_id) REFERENCES md_groups(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS md_dish_ingredients (
   uid VARCHAR(128) NOT NULL,
   dish_id BIGINT UNSIGNED NOT NULL,

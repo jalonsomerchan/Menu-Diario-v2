@@ -41,6 +41,7 @@ import {
   PhPlus,
   PhShoppingCart,
   PhSpeakerHigh,
+  PhStar,
   PhSparkle,
   PhSpinnerGap,
   PhTelegramLogo,
@@ -178,6 +179,8 @@ const dishStatsOpen = ref(false)
 const dishStatsLoading = ref(false)
 const dishStatsDish = ref(null)
 const dishStatsData = ref(null)
+const dishRatingHover = ref(0)
+const dishRatingSaving = ref(false)
 const dishRecipeOpen = ref(false)
 const dishRecipeDish = ref(null)
 const dishDetailSaving = ref(false)
@@ -1173,6 +1176,27 @@ function dishCategory(dish) {
 function dishTypeLabel(dish) {
   return dishTypes.find((type) => type.id === dish?.type)?.label || 'Plato casero'
 }
+function formatDishRating(value) {
+  const rating = Number(value)
+  return Number.isFinite(rating) && rating > 0 ? rating.toFixed(1).replace('.', ',') : '—'
+}
+function dishRatingCountLabel(value) {
+  const count = Number(value) || 0
+  return count ? `${count} ${count === 1 ? 'valoración' : 'valoraciones'}` : 'Aún sin valoraciones'
+}
+function dishRatingMineLabel(value) {
+  return value ? `Mi puntuación: ${value}/5` : 'Aún no has valorado este plato'
+}
+function dishRatingAriaLabel(star) {
+  return `Puntuar ${star} de 5`
+}
+function dishRatingStarWeight(star) {
+  return activeDishRatingStar(star) ? 'fill' : 'regular'
+}
+function activeDishRatingStar(star) {
+  const currentRating = dishRatingHover.value || Number(dishStatsData.value?.my_rating || 0)
+  return star <= currentRating
+}
 function openDishEditor(dish) {
   dishEditorDish.value = dish
   Object.assign(dishDetailDraft, {
@@ -1266,6 +1290,9 @@ function buildLocalDishStats(dish) {
     last_used_at: dish?.last_used_at || '',
     streak: total > 5 ? Math.min(5, Math.ceil(total / 4)) : 0,
     average_gap_days: total > 1 ? Math.round(180 / total) : null,
+    my_rating: Number(dish?.my_rating) || null,
+    rating_average: Number(dish?.rating_average) || null,
+    rating_count: Number(dish?.rating_count || 0),
     monthly: monthly.map((value) => ({ value, height: Math.max(5, Math.round((value / max) * 100)) })),
     meal_breakdown: [
       { label: 'Comida', value: 56 },
@@ -1277,22 +1304,51 @@ function buildLocalDishStats(dish) {
 async function openDishStats(dish) {
   dishStatsDish.value = dish
   dishStatsData.value = buildLocalDishStats(dish)
+  dishRatingHover.value = 0
   dishStatsOpen.value = true
   dishStatsLoading.value = true
   try {
     await refreshToken()
     const data = await getJson(`menudiario/dish_stats?dish_id=${encodeURIComponent(dish.id)}`, userToken.value)
-    if (data.stats) dishStatsData.value = data.stats
+    if (data.stats) dishStatsData.value = { ...dishStatsData.value, ...data.stats }
   } catch {
     // The local aggregate keeps the modal useful while older API deployments catch up.
   } finally {
     dishStatsLoading.value = false
   }
 }
+async function saveDishRating(rating) {
+  if (dishRatingSaving.value || !dishStatsDish.value) return
+  const normalizedRating = Number(rating)
+  if (!Number.isInteger(normalizedRating) || normalizedRating < 1 || normalizedRating > 5) return
+  const previousRating = dishStatsData.value?.my_rating || null
+  dishRatingSaving.value = true
+  dishRatingHover.value = 0
+  dishStatsData.value = { ...dishStatsData.value, my_rating: normalizedRating }
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/save_dish_rating', userToken.value, {
+      dish_id: dishStatsDish.value.id,
+      rating: normalizedRating,
+    })
+    if (data.rating) dishStatsData.value = { ...dishStatsData.value, ...data.rating }
+    notice.value = 'Tu puntuación se ha guardado.'
+    window.setTimeout(() => {
+      notice.value = ''
+    }, 2500)
+  } catch (reason) {
+    dishStatsData.value = { ...dishStatsData.value, my_rating: previousRating }
+    error.value = reason instanceof Error ? reason.message : 'No se pudo guardar tu puntuación.'
+  } finally {
+    dishRatingSaving.value = false
+  }
+}
 function closeDishStats() {
   dishStatsOpen.value = false
   dishStatsDish.value = null
   dishStatsData.value = null
+  dishRatingHover.value = 0
 }
 function openDishRecipe(dish) {
   if (!dish?.recipe?.trim()) return
@@ -4241,6 +4297,27 @@ onUnmounted(() => {
         </div>
         <div v-if="dishStatsData" class="dish-stats-scroll">
           <div class="stats-hero"><div class="dish-stats-photo"><img v-if="dishStatsDish?.photo_url" :src="dishStatsDish.photo_url" :alt="`Foto de ${dishStatsDish.name}`" /><PhForkKnife v-else :size="30" /></div><div><span class="stats-category">{{ dishCategory(dishStatsDish || {}) }}</span><p>{{ dishStatsLoading ? 'Actualizando datos…' : 'Así encaja este plato en tus hábitos.' }}</p></div><PhHeart :size="27" :weight="dishStatsDish?.is_favorite ? 'fill' : 'regular'" class="stats-heart" /></div>
+          <section class="dish-rating-card" aria-labelledby="dish-rating-title">
+            <div class="dish-rating-heading">
+              <div>
+                <p class="field-kicker">VALORACIONES</p>
+                <h3 id="dish-rating-title">¿Qué te parece este plato?</h3>
+                <p>Tu valoración se comparte con los miembros de tu grupo.</p>
+              </div>
+              <div class="dish-rating-summary" aria-label="Puntuación total del plato">
+                <strong>{{ formatDishRating(dishStatsData.rating_average) }}<small>/5</small></strong>
+                <span>Puntuación total</span>
+                <small>{{ dishRatingCountLabel(dishStatsData.rating_count) }}</small>
+              </div>
+            </div>
+            <div class="dish-rating-control">
+              <div class="dish-rating-stars" role="radiogroup" aria-label="Mi puntuación">
+                <button v-for="star in 5" :key="star" type="button" class="dish-rating-star" :class="{ active: activeDishRatingStar(star) }" :disabled="dishRatingSaving" :aria-label="dishRatingAriaLabel(star)" :aria-checked="dishStatsData.my_rating === star" role="radio" @mouseenter="dishRatingHover = star" @mouseleave="dishRatingHover = 0" @focus="dishRatingHover = star" @blur="dishRatingHover = 0" @click="saveDishRating(star)"><PhStar :size="28" :weight="dishRatingStarWeight(star)" /></button>
+              </div>
+              <span class="dish-rating-mine">{{ dishRatingMineLabel(dishStatsData.my_rating) }}</span>
+              <span v-if="dishRatingSaving" class="dish-rating-saving">Guardando…</span>
+            </div>
+          </section>
           <h3>Estadísticas de consumo</h3>
           <div class="stats-kpi-grid"><div class="stats-kpi"><span>Veces que lo has comido</span><strong>{{ dishStatsData.total }}</strong><small>en total</small></div><div class="stats-kpi"><span>Frecuencia</span><strong>{{ dishStatsData.frequency }}</strong><small>promedio</small></div><div class="stats-kpi"><span>Última vez</span><strong>{{ formatDishDate(dishStatsData.last_used_at) }}</strong><small>fecha registrada</small></div><div class="stats-kpi"><span>Racha actual</span><strong>{{ dishStatsData.streak || 0 }}</strong><small>semanas seguidas</small></div></div>
           <div class="stats-section"><div class="stats-section-heading"><h3>Evolución mensual</h3><span>últimos 12 meses</span></div><div class="stats-chart" aria-label="Gráfico de usos por mes"><div v-for="(month, index) in dishStatsData.monthly" :key="index" class="stats-chart-column"><span class="stats-chart-bar" :style="{ height: `${month.height}%` }"></span><small>{{ statsMonthLabels[index] }}</small></div></div></div>
