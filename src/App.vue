@@ -51,6 +51,7 @@ import {
   PhX,
 } from '@phosphor-icons/vue'
 import { ApiError, getJson, postJson, uploadFile } from './lib/api'
+import { compressPhoto } from './lib/images'
 import { filterAndSortDishes, filterAndSortIngredients, pagination } from './lib/catalog'
 import { formatDay, fromIsoDate, mondayOf, shiftDate, toIsoDate } from './lib/dates'
 import {
@@ -1664,8 +1665,9 @@ async function uploadDishPhoto(event, dish) {
   photoUploadingDish.value = String(dish.id)
   error.value = ''
   try {
+    const compressedFile = await compressPhoto(file)
     await refreshToken()
-    const data = await uploadFile('menudiario/upload_dish_photo', userToken.value, file, {
+    const data = await uploadFile('menudiario/upload_dish_photo', userToken.value, compressedFile, {
       dish_id: dish.id,
     })
     updateDishInCatalog(data.dish)
@@ -4314,9 +4316,9 @@ onUnmounted(() => {
                   <small>No cierres esta ventana</small>
                 </div>
               </div>
-              <label class="photo-upload-button" :class="{ uploading: Boolean(photoUploadingDish) }"><PhSpinnerGap v-if="photoUploadingDish" :size="17" class="spin-icon" /><PhCamera v-else :size="17" /> {{ photoUploadingDish ? 'Subiendo foto…' : (dishEditorDish?.photo_url ? 'Cambiar foto' : 'Subir una foto') }}<input type="file" accept="image/*" capture="environment" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
+              <label class="photo-upload-button" :class="{ uploading: Boolean(photoUploadingDish) }"><PhSpinnerGap v-if="photoUploadingDish" :size="17" class="spin-icon" /><PhCamera v-else :size="17" /> {{ photoUploadingDish ? 'Subiendo foto…' : (dishEditorDish?.photo_url ? 'Cambiar foto' : 'Elegir o hacer foto') }}<input type="file" accept="image/*" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
               <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish) || Boolean(photoUploadingDish) || dishEditorDish?.group_photo_only" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
-              <small class="field-help">JPG, PNG o WebP · Máximo 10 MB</small>
+              <small class="field-help">Elige una foto o hazla ahora · Se comprime a 500 px de ancho</small>
             </div>
             <div class="dish-editor-fields">
               <label class="field-label"><span>Nombre del plato *</span><input v-model="dishDetailDraft.name" maxlength="190" required /></label>
