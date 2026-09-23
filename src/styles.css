@@ -3657,16 +3657,6 @@ textarea:focus,
   border-color: #b8d1bc;
   box-shadow: 0 0 0 3px #2c6b4c18;
 }
-.dish-rating-action-button.active {
-  color: #c98222;
-  background: #fff7e8;
-  border-color: #ebd2a4;
-}
-.dish-rate-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
 .table-favorite-button {
   color: #78877d;
 }

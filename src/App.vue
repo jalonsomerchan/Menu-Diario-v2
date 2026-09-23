@@ -1229,6 +1229,28 @@ function openDishEditor(dish) {
   dishEditorTab.value = 'photo'
   dishEditorOpen.value = true
 }
+async function loadDishStatsData(dish) {
+  if (!dish) return
+  dishStatsDish.value = dish
+  dishStatsData.value = buildLocalDishStats(dish)
+  dishRatingHover.value = 0
+  dishStatsLoading.value = true
+  try {
+    await refreshToken()
+    const data = await getJson(`menudiario/dish_stats?dish_id=${encodeURIComponent(dish.id)}`, userToken.value)
+    if (data.stats) dishStatsData.value = { ...dishStatsData.value, ...data.stats }
+  } catch {
+    // The local aggregate keeps the rating useful while older API deployments catch up.
+  } finally {
+    dishStatsLoading.value = false
+  }
+}
+function openDishRatingTab() {
+  const dish = dishEditorDish.value
+  if (!dish) return
+  dishEditorTab.value = 'rating'
+  void loadDishStatsData(dish)
+}
 async function openPlannerDish(dishName) {
   let dish = dishes.value.find(
     (item) => normalizeDishName(item.name) === normalizeDishName(dishName),
@@ -1319,20 +1341,8 @@ function buildLocalDishStats(dish) {
   }
 }
 async function openDishStats(dish) {
-  dishStatsDish.value = dish
-  dishStatsData.value = buildLocalDishStats(dish)
-  dishRatingHover.value = 0
   dishStatsOpen.value = true
-  dishStatsLoading.value = true
-  try {
-    await refreshToken()
-    const data = await getJson(`menudiario/dish_stats?dish_id=${encodeURIComponent(dish.id)}`, userToken.value)
-    if (data.stats) dishStatsData.value = { ...dishStatsData.value, ...data.stats }
-  } catch {
-    // The local aggregate keeps the modal useful while older API deployments catch up.
-  } finally {
-    dishStatsLoading.value = false
-  }
+  await loadDishStatsData(dish)
 }
 async function saveDishRating(rating) {
   if (dishRatingSaving.value || !dishStatsDish.value) return
@@ -1388,12 +1398,6 @@ function editDishFromStats() {
   const dish = dishStatsDish.value
   closeDishStats()
   if (dish) openDishEditor(dish)
-}
-function rateDishFromEditor() {
-  const dish = dishEditorDish.value
-  if (!dish) return
-  closeDishEditor()
-  void openDishStats(dish)
 }
 function setDishPage(page) {
   dishPage.value = Math.min(Math.max(1, page), dishPageCount.value)
@@ -3371,7 +3375,7 @@ onUnmounted(() => {
               <span role="columnheader">Ingredientes</span>
               <span role="columnheader" class="dish-recipe-heading">Receta</span>
               <span role="columnheader" class="dish-action-heading">Editar</span>
-              <span role="columnheader" class="dish-action-heading">Valorar</span>
+              <span role="columnheader" class="dish-action-heading">Estadísticas</span>
               <span role="columnheader" class="dish-favorite-heading" aria-label="Favorito"><PhHeart :size="20" /></span>
             </div>
             <div v-for="dish in pagedDishes" :key="dish.id" class="dish-table-row" role="row">
@@ -3395,7 +3399,7 @@ onUnmounted(() => {
                 <span v-else class="detail-empty">Sin receta</span>
               </div>
               <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="dish.group_photo_only ? `Foto compartida de ${dish.name}` : `Editar ${dish.name}`" :title="dish.group_photo_only ? 'Foto compartida por el grupo' : 'Editar plato'" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button dish-rating-action-button" :class="{ active: Number(dish.my_rating) > 0 }" :disabled="dish.group_photo_only" :aria-label="`Valorar ${dish.name}`" title="Ver estadísticas y valorar" @click="openDishStats(dish)"><PhStar :size="19" :weight="Number(dish.my_rating) > 0 ? 'fill' : 'regular'" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
               <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :disabled="dish.group_photo_only" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
             </div>
           </div>
@@ -4292,6 +4296,7 @@ onUnmounted(() => {
         </div>
         <div class="dish-editor-tabs" @keydown="navigateDishTabs" role="tablist" aria-label="Secciones del plato">
           <button type="button" id="dish-tab-photo" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'photo' ? 0 : -1" :aria-selected="dishEditorTab === 'photo'" :class="{ active: dishEditorTab === 'photo' }" @click="dishEditorTab = 'photo'"><PhCamera :size="17" /> Foto</button>
+          <button type="button" id="dish-tab-rating" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'rating' ? 0 : -1" :aria-selected="dishEditorTab === 'rating'" :class="{ active: dishEditorTab === 'rating' }" @click="openDishRatingTab"><PhStar :size="17" /> Valoración</button>
           <button type="button" id="dish-tab-ingredients" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'ingredients' ? 0 : -1" :aria-selected="dishEditorTab === 'ingredients'" :class="{ active: dishEditorTab === 'ingredients' }" :disabled="dishDetailDraft.type === 'purchased'" @click="dishEditorTab = 'ingredients'"><PhList :size="17" /> Ingredientes</button>
           <button type="button" id="dish-tab-description" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'description' ? 0 : -1" :aria-selected="dishEditorTab === 'description'" :class="{ active: dishEditorTab === 'description' }" @click="dishEditorTab = 'description'"><PhNotePencil :size="17" /> Descripción</button>
           <button type="button" id="dish-tab-recipe" role="tab" aria-controls="dish-editor-panel" :tabindex="dishEditorTab === 'recipe' ? 0 : -1" :aria-selected="dishEditorTab === 'recipe'" :class="{ active: dishEditorTab === 'recipe' }" @click="dishEditorTab = 'recipe'"><PhChefHat :size="17" /> Receta</button>
@@ -4323,6 +4328,30 @@ onUnmounted(() => {
               <p v-else-if="dishEditorDish?.group_photo_only" class="field-help">Foto compartida por otro miembro del grupo. Añade este plato a tu catálogo para poder gestionarlo.</p>
             </div>
           </div>
+          <div v-else-if="dishEditorTab === 'rating'" class="dish-editor-tab-content dish-rating-tab-content">
+            <div v-if="dishStatsLoading && !dishStatsData" class="loading-card" role="status"><span class="spinner" aria-hidden="true"></span> Cargando valoración…</div>
+            <section v-else-if="dishStatsData" class="dish-rating-card" aria-labelledby="dish-editor-rating-title">
+              <div class="dish-rating-heading">
+                <div>
+                  <p class="field-kicker">VALORACIONES</p>
+                  <h3 id="dish-editor-rating-title">¿Qué te parece este plato?</h3>
+                  <p>Tu valoración se comparte con los miembros de tu grupo.</p>
+                </div>
+                <div class="dish-rating-summary" aria-label="Puntuación total del plato">
+                  <strong>{{ formatDishRating(dishStatsData.rating_average) }}<small>/5</small></strong>
+                  <span>Puntuación total</span>
+                  <small>{{ dishRatingCountLabel(dishStatsData.rating_count) }}</small>
+                </div>
+              </div>
+              <div class="dish-rating-control">
+                <div class="dish-rating-stars" role="radiogroup" aria-label="Mi puntuación">
+                  <button v-for="star in 5" :key="star" type="button" class="dish-rating-star" :class="{ active: activeDishRatingStar(star) }" :disabled="dishRatingSaving" :aria-label="dishRatingAriaLabel(star)" :aria-checked="dishStatsData.my_rating === star" role="radio" @mouseenter="dishRatingHover = star" @mouseleave="dishRatingHover = 0" @focus="dishRatingHover = star" @blur="dishRatingHover = 0" @click="saveDishRating(star)"><PhStar :size="28" :weight="dishRatingStarWeight(star)" /></button>
+                </div>
+                <span class="dish-rating-mine">{{ dishRatingMineLabel(dishStatsData.my_rating) }}</span>
+                <span v-if="dishRatingSaving" class="dish-rating-saving">Guardando…</span>
+              </div>
+            </section>
+          </div>
           <div v-else-if="dishEditorTab === 'ingredients' && dishDetailDraft.type !== 'purchased'" class="dish-editor-tab-content">
             <div class="dish-tab-intro"><div><span class="field-kicker">INGREDIENTES</span><h3>Lo que necesitas para prepararlo</h3></div><button type="button" class="secondary-button" @click="generateDishIngredients"><PhSparkle :size="17" weight="fill" /> Generar con IA</button></div>
             <p class="muted">Añádelos uno a uno; se reutilizarán en tu lista de la compra.</p>
@@ -4335,7 +4364,7 @@ onUnmounted(() => {
           <div v-else-if="dishEditorTab === 'description'" class="dish-editor-tab-content"><label class="field-label"><span>Descripción breve</span><textarea v-model="dishDetailDraft.description" rows="8" maxlength="1000" placeholder="Cuenta qué hace especial a este plato, cuándo sueles prepararlo o con qué acompañarlo."></textarea></label><p class="field-help">Una frase clara ayuda a elegirlo cuando estés planificando la semana.</p></div>
           <div v-else class="dish-editor-tab-content"><label class="field-label"><span>Receta</span><textarea v-model="dishDetailDraft.recipe" rows="12" maxlength="5000" placeholder="1. Prepara los ingredientes…\n2. Cocina a fuego medio…\n3. Sirve y disfruta."></textarea></label><p class="field-help">Puedes escribir pasos, tiempos y trucos de cocina.</p></div>
         </div>
-        <div class="modal-footer dish-editor-footer"><button type="button" class="secondary-button dish-rate-button" :disabled="dishDetailSaving || Boolean(photoUploadingDish)" @click="rateDishFromEditor"><PhStar :size="17" /> Valorar plato</button><button type="button" class="secondary-button" :disabled="dishDetailSaving" @click="closeDishEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="dishDetailSaving">{{ dishDetailSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
+        <div class="modal-footer dish-editor-footer"><button type="button" class="secondary-button" :disabled="dishDetailSaving" @click="closeDishEditor">Cancelar</button><button type="submit" class="primary-button" :disabled="dishDetailSaving">{{ dishDetailSaving ? 'Guardando…' : 'Guardar cambios' }}</button></div>
       </form>
     </dialog>
 
@@ -4347,27 +4376,6 @@ onUnmounted(() => {
         </div>
         <div v-if="dishStatsData" class="dish-stats-scroll">
           <div class="stats-hero"><div class="dish-stats-photo"><img v-if="dishStatsDish?.photo_url" :src="dishStatsDish.photo_url" :alt="`Foto de ${dishStatsDish.name}`" /><PhForkKnife v-else :size="30" /></div><div><span class="stats-category">{{ dishCategory(dishStatsDish || {}) }}</span><p>{{ dishStatsLoading ? 'Actualizando datos…' : 'Así encaja este plato en tus hábitos.' }}</p></div><PhHeart :size="27" :weight="dishStatsDish?.is_favorite ? 'fill' : 'regular'" class="stats-heart" /></div>
-          <section class="dish-rating-card" aria-labelledby="dish-rating-title">
-            <div class="dish-rating-heading">
-              <div>
-                <p class="field-kicker">VALORACIONES</p>
-                <h3 id="dish-rating-title">¿Qué te parece este plato?</h3>
-                <p>Tu valoración se comparte con los miembros de tu grupo.</p>
-              </div>
-              <div class="dish-rating-summary" aria-label="Puntuación total del plato">
-                <strong>{{ formatDishRating(dishStatsData.rating_average) }}<small>/5</small></strong>
-                <span>Puntuación total</span>
-                <small>{{ dishRatingCountLabel(dishStatsData.rating_count) }}</small>
-              </div>
-            </div>
-            <div class="dish-rating-control">
-              <div class="dish-rating-stars" role="radiogroup" aria-label="Mi puntuación">
-                <button v-for="star in 5" :key="star" type="button" class="dish-rating-star" :class="{ active: activeDishRatingStar(star) }" :disabled="dishRatingSaving" :aria-label="dishRatingAriaLabel(star)" :aria-checked="dishStatsData.my_rating === star" role="radio" @mouseenter="dishRatingHover = star" @mouseleave="dishRatingHover = 0" @focus="dishRatingHover = star" @blur="dishRatingHover = 0" @click="saveDishRating(star)"><PhStar :size="28" :weight="dishRatingStarWeight(star)" /></button>
-              </div>
-              <span class="dish-rating-mine">{{ dishRatingMineLabel(dishStatsData.my_rating) }}</span>
-              <span v-if="dishRatingSaving" class="dish-rating-saving">Guardando…</span>
-            </div>
-          </section>
           <h3>Estadísticas de consumo</h3>
           <div class="stats-kpi-grid"><div class="stats-kpi"><span>Veces que lo has comido</span><strong>{{ dishStatsData.total }}</strong><small>en total</small></div><div class="stats-kpi"><span>Frecuencia</span><strong>{{ dishStatsData.frequency }}</strong><small>promedio</small></div><div class="stats-kpi"><span>Última vez</span><strong>{{ formatDishDate(dishStatsData.last_used_at) }}</strong><small>fecha registrada</small></div><div class="stats-kpi"><span>Racha actual</span><strong>{{ dishStatsData.streak || 0 }}</strong><small>semanas seguidas</small></div></div>
           <div class="stats-section"><div class="stats-section-heading"><h3>Evolución mensual</h3><span>últimos 12 meses</span></div><div class="stats-chart" aria-label="Gráfico de usos por mes"><div v-for="(month, index) in dishStatsData.monthly" :key="index" class="stats-chart-column"><span class="stats-chart-bar" :style="{ height: `${month.height}%` }"></span><small>{{ statsMonthLabels[index] }}</small></div></div></div>
