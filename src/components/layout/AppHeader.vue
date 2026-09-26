@@ -4,7 +4,6 @@ import {
   PhBell,
   PhCalendarBlank,
   PhCookingPot,
-  PhArrowsClockwise,
   PhForkKnife,
   PhGear,
   PhHouse,
