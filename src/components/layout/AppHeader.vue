@@ -4,6 +4,7 @@ import {
   PhBell,
   PhCalendarBlank,
   PhCookingPot,
+  PhArrowsClockwise,
   PhForkKnife,
   PhGear,
   PhHouse,
@@ -37,7 +38,8 @@ defineEmits([
 
 const navigation = [
   { route: 'dashboard', label: 'Planificador', icon: PhHouse },
-  { route: 'dishes', label: 'Mis platos', icon: PhForkKnife },
+  { route: 'dishes', label: 'Platos del grupo', icon: PhForkKnife },
+  { route: 'dish-merge', label: 'Fusionar platos', icon: PhArrowsClockwise },
   { route: 'ingredients', label: 'Ingredientes', icon: PhLeaf },
   { route: 'ingredient-merge', label: 'Fusionar ingredientes', icon: PhArrowsClockwise },
   { route: 'tuppers', label: 'Mis tuppers', icon: PhCookingPot },

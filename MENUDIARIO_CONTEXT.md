@@ -172,7 +172,8 @@ La base nueva contiene inicialmente:
 - `md_daily_options`: opciones/condiciones diarias pertenecientes al grupo.
 - `md_global_alerts`: catálogo de avisos globales del grupo, con hora, icono y
   días de antelación (0 = mismo día; hasta 30 días antes).
-- `md_dishes`: platos globales y platos propios del usuario.
+- `md_dishes`: platos globales y platos creados por cada usuario; el catálogo
+  visible incluye los platos de todas las personas del grupo actual.
 - `md_week_menus`: una fila por usuario y semana.
 - `md_menu_days`: siete días por semana y sus IDs de opciones diarias.
 - `md_menu_meals`: desayuno, comida y cena por día, incluyendo los avisos

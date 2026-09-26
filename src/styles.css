@@ -6401,6 +6401,11 @@ textarea:focus,
 .ingredient-merge-page {
   padding-bottom: 2rem;
 }
+.dishes-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
 .ingredient-merge-page-heading {
   align-items: center;
 }
@@ -6653,6 +6658,13 @@ textarea:focus,
   }
 }
 @media (max-width: 620px) {
+  .dishes-heading-actions {
+    width: 100%;
+  }
+  .dishes-heading-actions > button {
+    flex: 1;
+    justify-content: center;
+  }
   .ingredient-create-form {
     align-items: stretch;
     flex-wrap: wrap;

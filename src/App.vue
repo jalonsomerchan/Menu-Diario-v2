@@ -218,6 +218,10 @@ const ingredientMergeSearch = ref('')
 const ingredientMergeSelected = ref(new Set())
 const ingredientMergeKeepId = ref('')
 const ingredientMerging = ref(false)
+const dishMergeSearch = ref('')
+const dishMergeSelected = ref(new Set())
+const dishMergeKeepId = ref('')
+const dishMerging = ref(false)
 const calendarMonth = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
 const calendarDays = ref(new Map())
 const calendarLoading = ref(true)
@@ -297,6 +301,7 @@ const ingredientEditorSupermarket = computed(() => {
 })
 const isSettings = computed(() => route.name === 'settings')
 const isDishes = computed(() => route.name === 'dishes')
+const isDishMerge = computed(() => route.name === 'dish-merge')
 const isIngredients = computed(() => route.name === 'ingredients')
 const isIngredientMerge = computed(() => route.name === 'ingredient-merge')
 const isTuppers = computed(() => route.name === 'tuppers')
@@ -308,7 +313,8 @@ const isDashboard = computed(() => route.name === 'dashboard')
 const loadingMessage = computed(() => {
   const messages = {
     dashboard: 'Cargando tu menú…',
-    dishes: 'Cargando tus platos…',
+    dishes: 'Cargando platos del grupo…',
+    'dish-merge': 'Cargando platos del grupo…',
     ingredients: 'Cargando ingredientes…',
     'ingredient-merge': 'Cargando ingredientes…',
     shopping: 'Cargando la lista de la compra…',
@@ -353,6 +359,12 @@ const selectedMergeIngredients = computed(() => {
   const selected = ingredientMergeSelected.value
   return ingredientList.value.filter((ingredient) => selected.has(Number(ingredient.id)))
 })
+const mergeableDishes = computed(() => dishes.value.filter((dish) => Number.isInteger(Number(dish.id)) && Number(dish.id) > 0 && !dish.group_photo_only && dish.source !== 'admin'))
+const filteredMergeDishes = computed(() => {
+  const query = dishMergeSearch.value.trim().toLocaleLowerCase('es')
+  return mergeableDishes.value.filter((dish) => !query || dish.name.toLocaleLowerCase('es').includes(query))
+})
+const selectedMergeDishes = computed(() => mergeableDishes.value.filter((dish) => dishMergeSelected.value.has(Number(dish.id))))
 const tupperStats = computed(() => ({
   containers: tuppers.value.length,
   portions: tuppers.value.reduce((total, tupper) => total + Number(tupper.portions || 0), 0),
@@ -1216,6 +1228,7 @@ function activeDishRatingStar(star) {
   return star <= currentRating
 }
 function openDishEditor(dish) {
+  if (!dish || dish.source === 'admin' || dish.group_photo_only) return
   dishEditorDish.value = dish
   Object.assign(dishDetailDraft, {
     id: dish.id,
@@ -1503,6 +1516,44 @@ function clearIngredientMergeSelection() {
   if (ingredientMerging.value) return
   ingredientMergeSelected.value = new Set()
   ingredientMergeKeepId.value = ''
+}
+function toggleDishMergeSelection(dish) {
+  if (!dish?.id || dishMerging.value) return
+  const id = Number(dish.id)
+  const next = new Set(dishMergeSelected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  dishMergeSelected.value = next
+  if (!next.has(Number(dishMergeKeepId.value))) dishMergeKeepId.value = next.values().next().value || ''
+}
+function clearDishMergeSelection() {
+  if (dishMerging.value) return
+  dishMergeSelected.value = new Set()
+  dishMergeKeepId.value = ''
+}
+async function mergeSelectedDishes() {
+  if (dishMergeSelected.value.size < 2 || dishMerging.value) return
+  const selected = selectedMergeDishes.value
+  const keepId = Number(dishMergeKeepId.value || selected[0]?.id)
+  const keep = selected.find((dish) => Number(dish.id) === keepId) || selected[0]
+  const mergeIds = selected.filter((dish) => Number(dish.id) !== Number(keep.id)).map((dish) => Number(dish.id))
+  if (!mergeIds.length) return
+  const mergedNames = selected.filter((dish) => Number(dish.id) !== Number(keep.id)).map((dish) => `«${dish.name}»`).join(', ')
+  if (!window.confirm(`¿Unificar ${mergedNames} en «${keep.name}»? Sus menús, ingredientes, favoritos y estadísticas se conservarán.`)) return
+  dishMerging.value = true
+  error.value = ''
+  try {
+    await refreshToken()
+    const data = await postJson('menudiario/merge_dishes', userToken.value, { keep_id: keep.id, merge_ids: mergeIds })
+    if (Array.isArray(data.dishes)) dishes.value = data.dishes
+    dishMergeSelected.value = new Set()
+    dishMergeKeepId.value = ''
+    notice.value = `Platos unificados en «${keep.name}».`
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : 'No se pudieron unificar los platos.'
+  } finally {
+    dishMerging.value = false
+  }
 }
 async function mergeSelectedIngredients() {
   if (ingredientMergeSelected.value.size < 2 || ingredientMerging.value) return
@@ -2836,6 +2887,10 @@ function goToIngredientMerge() {
   menuOpen.value = false
   router.push({ name: 'ingredient-merge' })
 }
+function goToDishMerge() {
+  menuOpen.value = false
+  router.push({ name: 'dish-merge' })
+}
 function goToTuppers() {
   menuOpen.value = false
   router.push({ name: 'tuppers' })
@@ -2857,6 +2912,7 @@ function navigateTo(name) {
   const routes = {
     dashboard: goToDashboard,
     dishes: goToDishes,
+    'dish-merge': goToDishMerge,
     ingredients: goToIngredients,
     'ingredient-merge': goToIngredientMerge,
     tuppers: goToTuppers,
@@ -2921,8 +2977,8 @@ function navigateDishTabs(event) {
 }
 
 const pageTitles = {
-  dashboard: 'Planificador', dishes: 'Mis platos', ingredients: 'Ingredientes',
-  'ingredient-merge': 'Fusionar ingredientes', tuppers: 'Mis tuppers', shopping: 'Lista de la compra',
+  dashboard: 'Planificador', dishes: 'Platos del grupo', ingredients: 'Ingredientes',
+  'ingredient-merge': 'Fusionar ingredientes', 'dish-merge': 'Fusionar platos', tuppers: 'Mis tuppers', shopping: 'Lista de la compra',
   calendar: 'Calendario', tasks: 'Tareas', settings: 'Ajustes', 'shared-day': 'Menú compartido',
 }
 watch(() => route.name, async (name, previous) => {
@@ -2940,6 +2996,7 @@ async function loadRouteData(name = route.name) {
   if (name === 'dashboard') await loadDashboardRange()
   else if (name === 'dishes') await loadDishes()
   else if (name === 'ingredients' || name === 'ingredient-merge') await loadIngredients()
+  else if (name === 'dish-merge') await loadDishes()
   else if (name === 'shopping') await loadShoppingRange()
   else if (name === 'calendar') await loadCalendarMonth()
   else if (name === 'tasks') await loadTasks()
@@ -3110,7 +3167,7 @@ onUnmounted(() => {
           >
             <PhHouse :size="19" weight="regular" /><span>Planificador</span></button
           ><button type="button" :class="{ active: isDishes }" :aria-current="isDishes ? 'page' : undefined" @click="goToDishes">
-            <PhForkKnife :size="19" weight="regular" /><span>Mis platos</span></button
+            <PhForkKnife :size="19" weight="regular" /><span>Platos del grupo</span></button
           ><button type="button" :class="{ active: isIngredients }" :aria-current="isIngredients ? 'page' : undefined" @click="goToIngredients">
             <PhLeaf :size="19" weight="regular" /><span>Ingredientes</span></button
           ><button type="button" :class="{ active: isIngredientMerge }" :aria-current="isIngredientMerge ? 'page' : undefined" @click="goToIngredientMerge">
@@ -3304,13 +3361,16 @@ onUnmounted(() => {
         <section v-if="isDishes" class="catalog-page dishes-redesign-page">
           <div class="page-heading catalog-heading dishes-page-heading">
             <div>
-              <p class="eyebrow">TU CATÁLOGO</p>
-              <h1>Mis platos</h1>
-              <p class="muted">Aquí tienes todos tus platos. Añade, edita y organízalos para crear menús a tu medida.</p>
+              <p class="eyebrow">CATÁLOGO COMPARTIDO</p>
+              <h1>Platos del grupo</h1>
+              <p class="muted">Aquí ves los platos de todas las personas del grupo. Puedes añadir platos y editar sus fichas y fotos.</p>
             </div>
-            <button class="primary-button" :aria-expanded="dishCreateOpen" aria-controls="dish-create-form" @click="dishCreateOpen = !dishCreateOpen">
-              <PhPlus :size="18" weight="regular" /> Añadir plato
-            </button>
+            <div class="dishes-heading-actions">
+              <button type="button" class="secondary-button" @click="goToDishMerge"><PhArrowsClockwise :size="17" /> Fusionar platos</button>
+              <button class="primary-button" :aria-expanded="dishCreateOpen" aria-controls="dish-create-form" @click="dishCreateOpen = !dishCreateOpen">
+                <PhPlus :size="18" weight="regular" /> Añadir plato
+              </button>
+            </div>
           </div>
 
           <form v-if="dishCreateOpen" id="dish-create-form" ref="dishForm" class="dish-create-form dishes-create-inline" @submit.prevent="saveDish">
@@ -3360,7 +3420,7 @@ onUnmounted(() => {
             </label>
           </div>
 
-          <div v-if="loading" class="dish-table" aria-busy="true" aria-label="Cargando mis platos">
+          <div v-if="loading" class="dish-table" aria-busy="true" aria-label="Cargando platos del grupo">
             <div v-for="row in 6" :key="row" class="dish-table-row dish-table-skeleton">
               <span class="skeleton-dish-photo"></span><span class="skeleton-line"></span><span class="skeleton-line"></span>
             </div>
@@ -3384,7 +3444,7 @@ onUnmounted(() => {
               <div class="dish-name-cell" role="cell">
                 <a v-if="dish.photo_url" class="dish-table-photo" :href="dish.photo_url" target="_blank" rel="noreferrer" :title="`Ver foto de ${dish.name}`"><img :src="dish.photo_url" :alt="`Foto de ${dish.name}`" /></a>
                 <div v-else class="dish-table-photo dish-table-photo-empty"><PhForkKnife :size="20" /></div>
-                <div><strong>{{ dish.name }}</strong><small>{{ dishCategory(dish) }} · {{ dishTypeLabel(dish) }} · {{ dish.times_used || 0 }} {{ dish.times_used === 1 ? 'uso' : 'usos' }}</small></div>
+                <div><strong>{{ dish.name }}</strong><small>{{ dishCategory(dish) }} · {{ dishTypeLabel(dish) }} · {{ dish.times_used || 0 }} {{ dish.times_used === 1 ? 'uso' : 'usos' }}<template v-if="dish.source !== 'admin' && !dish.is_mine"> · De otra persona</template></small></div>
               </div>
               <div class="dish-ingredients-cell" role="cell">
                 <template v-if="dish.type === 'purchased'">
@@ -3394,15 +3454,15 @@ onUnmounted(() => {
                   <span v-for="ingredient in dish.ingredients.slice(0, 3)" :key="ingredient" class="ingredient-pill">{{ ingredient }}</span>
                   <span v-if="dish.ingredients.length > 3" class="ingredient-pill ingredient-pill-more">+{{ dish.ingredients.length - 3 }}</span>
                 </template>
-                <span v-else class="detail-empty">Sin ingredientes</span>
+                <span v-else class="detail-empty">{{ dish.source !== 'admin' && !dish.is_mine ? 'Ingredientes privados' : 'Sin ingredientes' }}</span>
               </div>
               <div class="dish-recipe-cell" role="cell">
                 <button v-if="dish.recipe?.trim()" type="button" class="recipe-read-button" :aria-label="`Leer receta de ${dish.name}`" @click="openDishRecipe(dish)"><PhBookOpen :size="17" /> <span>Leer receta</span></button>
                 <span v-else class="detail-empty">Sin receta</span>
               </div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="dish.group_photo_only ? `Foto compartida de ${dish.name}` : `Editar ${dish.name}`" :title="dish.group_photo_only ? 'Foto compartida por el grupo' : 'Editar plato'" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only" :aria-label="`Ver estadísticas de ${dish.name}`" title="Ver estadísticas" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
-              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :disabled="dish.group_photo_only" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only || dish.source === 'admin'" :aria-label="dish.group_photo_only ? `Foto compartida de ${dish.name}` : `Editar ${dish.name}`" :title="dish.group_photo_only ? 'Foto compartida por el grupo' : (dish.source === 'admin' ? 'Sugerencia inicial de solo lectura' : (dish.is_mine ? 'Editar plato' : 'Editar plato del grupo'))" @click="openDishEditor(dish)"><PhPencilSimple :size="18" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="table-action-button" :disabled="dish.group_photo_only || !dish.is_mine" :aria-label="`Ver estadísticas de ${dish.name}`" :title="dish.is_mine ? 'Ver estadísticas' : 'Estadísticas no disponibles para este plato'" @click="openDishStats(dish)"><PhChartBar :size="19" /></button></div>
+              <div class="dish-action-cell" role="cell"><button type="button" class="favorite-button table-favorite-button" :disabled="dish.group_photo_only || (!dish.is_mine && dish.source !== 'admin')" :class="{ active: dish.is_favorite }" :aria-pressed="Boolean(dish.is_favorite)" :aria-label="dish.is_favorite ? `Quitar ${dish.name} de favoritos` : `Añadir ${dish.name} a favoritos`" :title="dish.is_mine || dish.source === 'admin' ? (dish.is_favorite ? 'Quitar de favoritos' : 'Añadir de favoritos') : 'Solo puedes marcar tus platos como favoritos'" @click="toggleDishFavorite(dish)"><PhHeart :size="21" :weight="dish.is_favorite ? 'fill' : 'regular'" /></button></div>
             </div>
           </div>
           <div v-if="!loading && sortedDishes.length" class="dish-pagination">
@@ -3458,6 +3518,49 @@ onUnmounted(() => {
             </div>
           </div>
           <div v-if="sortedIngredients.length" class="ingredient-pagination"><span>Mostrando {{ ingredientPageStart }}–{{ ingredientPageEnd }} de {{ sortedIngredients.length }} ingredientes</span><div class="pagination-controls"><button type="button" class="pagination-button" :disabled="ingredientPage === 1" aria-label="Página anterior de ingredientes" @click="setIngredientPage(ingredientPage - 1)"><PhCaretLeft :size="17" /></button><button v-for="page in ingredientPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: ingredientPage === page }" :aria-current="ingredientPage === page ? 'page' : undefined" :aria-label="`Página ${page}`" @click="setIngredientPage(page)">{{ page }}</button><button type="button" class="pagination-button" :disabled="ingredientPage === ingredientPageCount" aria-label="Página siguiente de ingredientes" @click="setIngredientPage(ingredientPage + 1)"><PhCaretRight :size="17" /></button></div></div>
+        </section>
+        <section v-else-if="isDishMerge" class="ingredient-merge-page">
+          <div class="page-heading ingredient-merge-page-heading">
+            <div>
+              <p class="eyebrow">GESTIÓN DEL CATÁLOGO</p>
+              <h1>Fusionar platos</h1>
+              <p class="muted">Selecciona manualmente dos o más platos duplicados y elige cuál conservar. Los menús anteriores, ingredientes, favoritos y estadísticas se trasladarán.</p>
+            </div>
+            <button type="button" class="secondary-button" @click="goToDishes"><PhArrowLeft :size="17" /> Volver a Platos</button>
+          </div>
+          <div v-if="!mergeableDishes.length" class="empty-state ingredients-empty-state">
+            <PhForkKnife :size="34" weight="regular" />
+            <h2>No hay platos para fusionar</h2>
+            <p>Añade platos desde la página de Platos.</p>
+          </div>
+          <div v-else class="ingredient-merge-layout">
+            <section class="ingredient-merge-picker" aria-labelledby="dish-merge-picker-title">
+              <div class="ingredient-merge-picker-heading">
+                <div><h2 id="dish-merge-picker-title">Selecciona los platos</h2><p>La selección es completamente manual.</p></div>
+                <span class="ingredient-merge-selection-count">{{ dishMergeSelected.size }} seleccionados</span>
+              </div>
+              <label class="search-field ingredient-merge-search"><PhMagnifyingGlass :size="19" weight="regular" aria-hidden="true" /><input v-model="dishMergeSearch" type="search" placeholder="Buscar platos" aria-label="Buscar platos para fusionar" /></label>
+              <div v-if="!filteredMergeDishes.length" class="ingredient-merge-no-results">No hay platos que coincidan con la búsqueda.</div>
+              <div v-else class="ingredient-merge-options">
+                <label v-for="dish in filteredMergeDishes" :key="dish.id" class="ingredient-merge-option" :class="{ selected: dishMergeSelected.has(Number(dish.id)) }">
+                  <input type="checkbox" :checked="dishMergeSelected.has(Number(dish.id))" @change="toggleDishMergeSelection(dish)" />
+                  <span class="ingredient-merge-option-check"><PhCheck :size="14" weight="bold" /></span>
+                  <span class="ingredient-merge-option-copy"><strong>{{ dish.name }}</strong><small>{{ dish.type === 'purchased' ? 'Comprado preparado' : 'Plato casero' }} · {{ dish.is_mine ? 'Tu plato' : 'Plato del grupo' }}</small></span>
+                </label>
+              </div>
+            </section>
+            <aside class="ingredient-merge-summary">
+              <div class="ingredient-merge-summary-icon"><PhArrowsClockwise :size="24" /></div>
+              <h2>Fusionar selección</h2>
+              <p v-if="dishMergeSelected.size < 2">Selecciona al menos dos platos para poder fusionarlos.</p>
+              <template v-else>
+                <p>Los menús pasarán a usar el plato conservado. Se juntarán sus ingredientes y favoritos, y se mantendrán las estadísticas existentes.</p>
+                <label class="ingredient-merge-keep-field"><span>Plato que se conservará</span><select v-model.number="dishMergeKeepId"><option v-for="dish in selectedMergeDishes" :key="dish.id" :value="dish.id">{{ dish.name }}</option></select></label>
+                <button type="button" class="primary-button ingredient-merge-submit" :disabled="dishMerging" @click="mergeSelectedDishes"><PhArrowsClockwise :size="17" />{{ dishMerging ? 'Fusionando…' : 'Fusionar platos' }}</button>
+                <button type="button" class="secondary-button ingredient-merge-clear" :disabled="dishMerging" @click="clearDishMergeSelection">Limpiar selección</button>
+              </template>
+            </aside>
+          </div>
         </section>
         <section v-else-if="isIngredientMerge" class="ingredient-merge-page">
           <div class="page-heading ingredient-merge-page-heading">
@@ -4317,7 +4420,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <label class="photo-upload-button" :class="{ uploading: Boolean(photoUploadingDish) }"><PhSpinnerGap v-if="photoUploadingDish" :size="17" class="spin-icon" /><PhCamera v-else :size="17" /> {{ photoUploadingDish ? 'Subiendo foto…' : (dishEditorDish?.photo_url ? 'Cambiar foto' : 'Elegir o hacer foto') }}<input type="file" accept="image/*" :disabled="Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @change="uploadDishPhoto($event, dishEditorDish)" /></label>
-              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish) || Boolean(photoUploadingDish) || dishEditorDish?.group_photo_only" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
+              <button v-if="dishEditorDish?.photo_url" type="button" class="photo-remove-button" :disabled="Boolean(photoDeletingDish) || Boolean(photoUploadingDish) || dishEditorDish?.source === 'admin' || dishEditorDish?.group_photo_only" @click="removeDishPhoto(dishEditorDish)"><PhTrash :size="16" /> {{ photoDeletingDish ? 'Eliminando…' : 'Eliminar foto' }}</button>
               <small class="field-help">Elige una foto o hazla ahora · Se comprime a 500 px de ancho</small>
             </div>
             <div class="dish-editor-fields">
@@ -4328,6 +4431,7 @@ onUnmounted(() => {
               <label class="dish-editor-check"><input type="checkbox" :checked="dishEditorDish?.is_favorite" disabled /> <span>Marcado como plato favorito</span></label>
               <p v-if="dishEditorDish?.source === 'admin'" class="field-help">Las fotos de las sugerencias iniciales no se pueden reemplazar.</p>
               <p v-else-if="dishEditorDish?.group_photo_only" class="field-help">Foto compartida por otro miembro del grupo. Añade este plato a tu catálogo para poder gestionarlo.</p>
+              <p v-else-if="!dishEditorDish?.is_mine" class="field-help">La ficha y la foto se comparten con el grupo. Los ingredientes que guardes aquí son solo tuyos.</p>
             </div>
           </div>
           <div v-else-if="dishEditorTab === 'rating'" class="dish-editor-tab-content dish-rating-tab-content">
