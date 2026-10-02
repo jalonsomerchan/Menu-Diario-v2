@@ -2,10 +2,10 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { vModal } from './directives/modal'
-import { vSelect2 } from './directives/select2'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppInstallBanner from './components/layout/AppInstallBanner.vue'
 import AppLoadingScreen from './components/layout/AppLoadingScreen.vue'
+import AutocompleteInput from './components/inputs/AutocompleteInput.vue'
 import {
   PhArrowLeft,
   PhArrowRight,
@@ -85,6 +85,8 @@ const preferences = reactive({
 })
 const dishes = ref([])
 const ingredientCatalog = ref([])
+const dishNames = computed(() => dishes.value.map((dish) => dish.name))
+const ingredientNames = computed(() => ingredientCatalog.value.map((ingredient) => ingredient.name))
 const ingredientList = ref([])
 const supermarkets = ref([])
 const tuppers = ref([])
@@ -2199,12 +2201,6 @@ function normalizeDishName(name) {
     .toLocaleLowerCase('es')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-}
-function hasDishSuggestion(name) {
-  return dishes.value.some((dish) => String(dish.name) === String(name))
-}
-function hasIngredientSuggestion(name) {
-  return ingredientCatalog.value.some((ingredient) => String(ingredient.name) === String(name))
 }
 function loadedRouletteUsedNames() {
   const used = new Set()
@@ -4462,7 +4458,17 @@ onUnmounted(() => {
             <div class="dish-tab-intro"><div><span class="field-kicker">INGREDIENTES</span><h3>Lo que necesitas para prepararlo</h3></div><button type="button" class="secondary-button" @click="generateDishIngredients"><PhSparkle :size="17" weight="fill" /> Generar con IA</button></div>
             <p class="muted">Añádelos uno a uno; se reutilizarán en tu lista de la compra.</p>
             <div class="dish-ingredients-list">
-              <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row"><span>{{ index + 1 }}</span><select v-select2="{ value: dishIngredientsDraft[index], placeholder: 'Busca o escribe un ingrediente', onChange: (value) => (dishIngredientsDraft[index] = value) }" :aria-label="`Ingrediente ${index + 1}`" class="ingredient-select"><option v-if="dishIngredientsDraft[index] && !hasIngredientSuggestion(dishIngredientsDraft[index])" :value="dishIngredientsDraft[index]">{{ dishIngredientsDraft[index] }}</option><option v-for="ingredient in ingredientCatalog" :key="ingredient.id || ingredient.name" :value="ingredient.name">{{ ingredient.name }}</option></select><button type="button" class="icon-button ingredient-remove-button" :aria-label="`Eliminar ingrediente ${index + 1}`" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button></label>
+              <div v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row">
+                <span>{{ index + 1 }}</span>
+                <AutocompleteInput
+                  v-model="dishIngredientsDraft[index]"
+                  :options="ingredientNames"
+                  placeholder="Busca o escribe un ingrediente"
+                  :aria-label="`Ingrediente ${index + 1}`"
+                  class="ingredient-select"
+                />
+                <button type="button" class="icon-button ingredient-remove-button" :aria-label="`Eliminar ingrediente ${index + 1}`" @click="removeDishIngredient(index)"><PhTrash :size="17" /></button>
+              </div>
             </div>
             <button type="button" class="secondary-button add-ingredient-button" @click="addDishIngredient"><PhPlus :size="17" /> Añadir ingrediente</button>
           </div>
@@ -4568,31 +4574,15 @@ onUnmounted(() => {
             próximas compras.
           </p>
           <div class="dish-ingredients-list">
-            <label v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row">
+            <div v-for="(_, index) in dishIngredientsDraft" :key="index" class="ingredient-row">
               <span>{{ index + 1 }}</span>
-              <select
-                v-select2="{
-                  value: dishIngredientsDraft[index],
-                  placeholder: 'Busca o escribe un ingrediente',
-                  onChange: (value) => (dishIngredientsDraft[index] = value),
-                }"
+              <AutocompleteInput
+                v-model="dishIngredientsDraft[index]"
+                :options="ingredientNames"
+                placeholder="Busca o escribe un ingrediente"
                 :aria-label="`Ingrediente ${index + 1}`"
                 class="ingredient-select"
-              >
-                <option
-                  v-if="dishIngredientsDraft[index] && !hasIngredientSuggestion(dishIngredientsDraft[index])"
-                  :value="dishIngredientsDraft[index]"
-                >
-                  {{ dishIngredientsDraft[index] }}
-                </option>
-                <option
-                  v-for="ingredient in ingredientCatalog"
-                  :key="ingredient.id || ingredient.name"
-                  :value="ingredient.name"
-                >
-                  {{ ingredient.name }}
-                </option>
-              </select>
+              />
               <button
                 type="button"
                 class="icon-button ingredient-remove-button"
@@ -4601,7 +4591,7 @@ onUnmounted(() => {
               >
                 <PhTrash :size="17" />
               </button>
-            </label>
+            </div>
           </div>
           <button type="button" class="secondary-button add-ingredient-button" @click="addDishIngredient">
             <PhPlus :size="17" /> Añadir ingrediente
@@ -4744,23 +4734,14 @@ onUnmounted(() => {
                 :key="itemIndex"
                 class="dish-input-row"
               >
-                <select
-                  v-select2="{
-                    value: draftDay.meals[meal].items[itemIndex],
-                    placeholder: `Busca o escribe un plato para ${mealLabels[meal].toLowerCase()}`,
-                    onChange: (value) => (draftDay.meals[meal].items[itemIndex] = value),
-                  }"
+                <AutocompleteInput
+                  v-model="draftDay.meals[meal].items[itemIndex]"
+                  :options="dishNames"
+                  :placeholder="`Busca o escribe un plato para ${mealLabels[meal].toLowerCase()}`"
                   :aria-label="`Plato para ${mealLabels[meal].toLowerCase()}`"
                   class="dish-select"
-                >
-                  <option
-                    v-if="draftDay.meals[meal].items[itemIndex] && !hasDishSuggestion(draftDay.meals[meal].items[itemIndex])"
-                    :value="draftDay.meals[meal].items[itemIndex]"
-                  >
-                    {{ draftDay.meals[meal].items[itemIndex] }}
-                  </option>
-                  <option v-for="dish in dishes" :key="dish.id" :value="dish.name">{{ dish.name }}</option>
-                </select><button
+                />
+                <button
                   class="remove-button"
                   title="Quitar plato"
                   :aria-label="`Quitar plato ${itemIndex + 1} de ${mealLabels[meal].toLowerCase()}`"

@@ -15,6 +15,19 @@ export class ApiError extends Error {
   }
 }
 
+function responseErrorMessage(payload, status) {
+  const message = payload.message || `La API respondió con ${status}.`
+  if (payload.code === 'INTERNAL_ERROR' && payload.details?.message) {
+    const exception = payload.details.exception ? `${payload.details.exception}: ` : ''
+    const location = payload.details.file
+      ? ` (${payload.details.file}:${payload.details.line || 0})`
+      : ''
+    const reference = payload.error_id ? ` [${payload.error_id}]` : ''
+    return `${message} ${exception}${payload.details.message}${location}${reference}`
+  }
+  return payload.error_id ? `${message} [${payload.error_id}]` : message
+}
+
 export async function apiRequest(path, token, options = {}) {
   const response = await fetch(`${API_BASE}/${path.replace(/^\//, '')}`, {
     ...options,
@@ -33,7 +46,7 @@ export async function apiRequest(path, token, options = {}) {
     const authReason = import.meta.env.DEV ? payload.details?.auth?.reason : ''
     const detail = authReason ? ` (${authReason})` : ''
     throw new ApiError(
-      `${payload.message || `La API respondió con ${response.status}.`}${detail}`,
+      `${responseErrorMessage(payload, response.status)}${detail}`,
       {
         status: response.status,
         code: payload.code || '',
@@ -83,7 +96,7 @@ export async function uploadFile(path, token, file, fields = {}) {
     const authReason = import.meta.env.DEV ? payload.details?.auth?.reason : ''
     const detail = authReason ? ` (${authReason})` : ''
     throw new ApiError(
-      `${payload.message || `La API respondió con ${response.status}.`}${detail}`,
+      `${responseErrorMessage(payload, response.status)}${detail}`,
       {
         status: response.status,
         code: payload.code || '',

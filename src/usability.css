@@ -115,9 +115,7 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
   .catalog-toolbar > *, .ingredients-toolbar > * { min-width: 0; width: 100%; }
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   select,
-  textarea,
-  .select2-container--default .select2-selection--single,
-  .select2-search--dropdown .select2-search__field { font-size: 16px; }
+  textarea { font-size: 16px; }
   .dish-create-form, .ingredient-create-form { flex-wrap: wrap; }
   .dish-create-form .select-field { flex: 1 1 100%; }
   .dish-create-form > button, .ingredient-create-form > button { width: 100%; justify-content: center; }
@@ -184,54 +182,85 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
   .ingredient-table-head > span { white-space: normal; }
 }
 
-/* Searchable Select2 controls replace browser-dependent datalists. */
-.select2-container { min-width: 0; }
-.dish-input-row .select2-container,
-.ingredient-row .select2-container { flex: 1 1 auto; }
-.select2-container--default .select2-selection--single {
-  display: flex;
-  align-items: center;
+/* Editable autocomplete keeps mobile focus and typed values in one native input. */
+.autocomplete-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.autocomplete-control > .autocomplete-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
   min-height: 46px;
-  padding: 0.1rem 0.75rem;
+  padding: 0.65rem 0.8rem;
   border: 1px solid #d8e5f2;
   border-radius: 11px;
-  background: #fbfdff;
-}
-.select2-container--default .select2-selection--single .select2-selection__rendered {
-  padding-left: 0;
   color: var(--ink);
-  line-height: 1.35;
+  background: #fbfdff;
+  font-size: 16px;
+  outline: none;
 }
-.select2-container--default .select2-selection--single .select2-selection__placeholder { color: var(--muted); }
-.select2-container--default .select2-selection--single .select2-selection__arrow {
-  top: 50%;
-  right: 0.55rem;
-  width: 1rem;
-  height: 1rem;
-  transform: translateY(-50%);
-}
-.select2-container--default.select2-container--focus .select2-selection--single,
-.select2-container--default.select2-container--open .select2-selection--single {
+.autocomplete-control > input::placeholder { color: var(--muted); }
+.autocomplete-control > input:focus {
   border-color: #76aef1;
   box-shadow: 0 0 0 3px rgba(23, 105, 232, 0.13);
 }
-.select2-dropdown {
-  overflow: hidden;
-  border-color: #b8d2ee;
-  border-radius: 12px;
-  box-shadow: 0 14px 32px rgba(21, 38, 74, 0.18);
-}
-.select2-search--dropdown { padding: 0.65rem; }
-.select2-container--default .select2-search--dropdown .select2-search__field {
-  min-height: 42px;
-  padding: 0.45rem 0.65rem;
+.autocomplete-options {
+  display: grid;
+  gap: 0.2rem;
+  max-height: min(32dvh, 240px);
+  overflow-y: auto;
+  margin: 0.35rem 0 0;
+  padding: 0.3rem;
   border: 1px solid #b8d2ee;
-  border-radius: 9px;
-  font-size: 16px;
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  box-shadow: 0 10px 24px rgba(21, 38, 74, 0.12);
+  list-style: none;
+  -webkit-overflow-scrolling: touch;
 }
-.select2-results__option { min-height: 44px; padding: 0.7rem 0.8rem; }
-.select2-container--default .select2-results__option--highlighted.select2-results__option--selectable {
+.autocomplete-options > li {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.autocomplete-options > li.active,
+.autocomplete-options > li:hover {
+  color: #fff;
   background: var(--blue);
+}
+.autocomplete-option-action {
+  flex: 0 0 auto;
+  color: var(--blue);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.autocomplete-options > li.active .autocomplete-option-action,
+.autocomplete-options > li:hover .autocomplete-option-action { color: #fff; }
+.autocomplete-options > .autocomplete-no-options {
+  color: var(--muted);
+  cursor: default;
+  font-size: 0.8rem;
+}
+.dish-input-row,
+.ingredient-row { align-items: flex-start; }
+.dish-input-row .remove-button {
+  flex: 0 0 auto;
+  min-height: 46px;
+  align-self: flex-start;
+}
+.ingredient-row > span { margin-top: 0.45rem; }
+.ingredient-row .autocomplete-control { flex: 1 1 auto; }
+.ingredient-row .ingredient-remove-button {
+  align-self: flex-start;
+  margin-top: 0.35rem;
 }
 
 /* iOS Safari needs explicit prefixed materials and safe-area offsets for fixed UI. */
@@ -270,7 +299,7 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
   }
   .modal-backdrop .modal-card,
   .navigation-panel,
-  .select2-results__options { -webkit-overflow-scrolling: touch; }
+  .autocomplete-options { -webkit-overflow-scrolling: touch; }
 }
 
 /* Fallback for iPhones that predate the dynamic viewport units. */
@@ -344,7 +373,7 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
   .day-editor-card .field-label > input,
   .day-editor-card .field-label > select,
   .day-editor-card .field-label > textarea,
-  .day-editor-card .select2-search__field { font-size: 1rem; }
+  .day-editor-card .autocomplete-input { font-size: 1rem; }
 }
 
 /* A full-height sheet also covers phones rotated into landscape. */
@@ -374,7 +403,13 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
   .day-editor-card .option-check-list { gap: 0.5rem; }
   .day-editor-card .editor-section-heading { flex-wrap: wrap; }
   .day-editor-card .meal-add-button { padding: 0.5rem; font-size: 0.8rem; }
-  .day-editor-card .dish-input-row { align-items: stretch; }
+  .day-editor-card .dish-input-row { align-items: flex-start; }
+  .day-editor-card .dish-input-row .remove-button {
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    min-height: 48px;
+  }
   .day-editor-card .modal-footer {
     gap: 0.5rem;
     padding: 0.65rem max(1rem, env(safe-area-inset-right)) max(0.65rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
@@ -382,15 +417,13 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
   .day-editor-card .day-save-actions { flex: 1 0 100%; }
   .day-editor-card .day-save-actions button { flex: 1; justify-content: center; }
   .day-editor-card .modal-footer .telegram-reminder-button { flex: 1 0 100%; }
-  .day-editor-card .select2-selection--single { min-height: 48px; }
-  .day-editor-card .select2-dropdown { max-height: min(48dvh, 360px); overflow-y: auto; }
+  .day-editor-card .autocomplete-input { min-height: 48px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .day-editor-card button:not(:disabled):active { transform: none; }
 }
 
 @media (max-width: 560px) {
-  .ingredient-row .ingredient-remove-button { width: 44px; height: 46px; }
-  .select2-container--default .select2-selection--single { min-height: 48px; }
-  .select2-container--open .select2-dropdown { max-height: min(48dvh, 360px); overflow-y: auto; }
+  .ingredient-row .ingredient-remove-button { width: 44px; min-height: 46px; }
+  .autocomplete-control > .autocomplete-input { min-height: 48px; }
 }
