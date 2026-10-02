@@ -949,9 +949,8 @@ textarea:focus {
 .shopping-meal-selection {
   display: grid;
   gap: 0.55rem;
-  max-height: 480px;
-  overflow-y: auto;
-  padding-right: 0.2rem;
+  max-height: none;
+  overflow: visible;
 }
 .shopping-meal-option {
   position: relative;
@@ -1232,8 +1231,8 @@ textarea:focus {
 .shopping-items-list {
   display: grid;
   gap: 1rem;
-  max-height: 440px;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   padding: 1rem 0.2rem 0.4rem 0;
 }
 .shopping-group h3 {

@@ -59,3 +59,9 @@ En el repositorio, configura estos secretos en `Settings → Secrets and variabl
 - `VITE_FIREBASE_APP_ID`
 
 La API de producción sigue siendo `https://alon.one/api`. Solo crea la variable `VITE_API_BASE` si cambia esa URL. En `Settings → Pages`, selecciona **GitHub Actions** como método de publicación y configura `menudiario2.alon.one` como dominio personalizado.
+
+## Lista de la compra
+
+La compra se actualiza al seleccionar platos y utiliza sus ingredientes guardados. Los platos sin ingredientes pueden completarse manualmente o con IA. Consulta los cambios y la verificación en [docs/shopping-redesign/README.md](docs/shopping-redesign/README.md).
+
+Las reglas del frontend se comprueban con `npm test`. Las reglas PHP se comprueban con `php tests/backend-shopping.php /ruta/a/api/MenudiarioShopping.php`.

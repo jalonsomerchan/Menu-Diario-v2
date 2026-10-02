@@ -91,8 +91,9 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
 .page-heading > div { min-width: 0; }
 .catalog-toolbar, .ingredients-toolbar { flex-wrap: wrap; }
 .search-field { min-width: min(100%, 230px); }
-.dish-table, .ingredient-table { overflow-x: auto; }
-.dish-table-head, .dish-table-row { min-width: 1000px; }
+.dish-table { overflow: visible; }
+.ingredient-table { overflow-x: auto; }
+.dish-table-head, .dish-table-row { min-width: 0; grid-template-columns: minmax(180px, 1.6fr) minmax(130px, 1.2fr) minmax(100px, .8fr) 64px 88px 44px; column-gap: .65rem; }
 .ingredient-table-head, .ingredient-table-row { min-width: 1100px; }
 .dish-name-cell strong, .ingredient-name-cell strong { white-space: normal; overflow-wrap: anywhere; }
 .dish-pagination, .ingredient-pagination { flex-wrap: wrap; }
@@ -426,4 +427,21 @@ main:has(.dishes-redesign-page, .ingredients-redesign-page) {
 @media (max-width: 560px) {
   .ingredient-row .ingredient-remove-button { width: 44px; min-height: 46px; }
   .autocomplete-control > .autocomplete-input { min-height: 48px; }
+}
+
+/* Dish catalogs flow with the page, including tablet-sized windows. */
+@media (min-width: 641px) and (max-width: 1050px) {
+  .dish-table { border: 0; background: transparent; }
+  .dish-table-head { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .dish-table-row { grid-template-columns: minmax(0, 1fr) repeat(3, 44px); gap: .7rem; padding: 1rem; margin-bottom: .75rem; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+  .dish-name-cell, .dish-ingredients-cell { grid-column: 1 / -1; }
+  .dish-ingredients-cell { flex-wrap: wrap; }
+  .dish-name-cell small { white-space: normal; }
+}
+main:has(.shopping-page) { width: min(100%, 1240px); }
+
+.dish-merge-page .ingredient-merge-options { max-height: none; overflow: visible; }
+@media (min-width: 641px) and (max-width: 1050px) {
+  .dishes-page-heading { flex-direction: column; align-items: flex-start; }
+  .dishes-heading-actions { flex-wrap: wrap; }
 }

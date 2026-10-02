@@ -6,13 +6,14 @@ import AppHeader from './components/layout/AppHeader.vue'
 import AppInstallBanner from './components/layout/AppInstallBanner.vue'
 import AppLoadingScreen from './components/layout/AppLoadingScreen.vue'
 import AutocompleteInput from './components/inputs/AutocompleteInput.vue'
+import ShoppingPage from './components/shopping/ShoppingPage.vue'
+import { buildShoppingList, reconcileShoppingSelection, shoppingCatalog, shoppingName } from './lib/shopping'
 import {
   PhArrowLeft,
   PhArrowRight,
   PhArrowsClockwise,
   PhBookOpen,
   PhBell,
-  PhCalendarBlank,
   PhCalendarCheck,
   PhCamera,
   PhCaretLeft,
@@ -40,7 +41,6 @@ import {
   PhPencilSimple,
   PhPlus,
   PhShoppingCart,
-  PhSpeakerHigh,
   PhStar,
   PhSparkle,
   PhSpinnerGap,
@@ -86,7 +86,7 @@ const preferences = reactive({
 const dishes = ref([])
 const ingredientCatalog = ref([])
 const dishNames = computed(() => dishes.value.map((dish) => dish.name))
-const ingredientNames = computed(() => ingredientCatalog.value.map((ingredient) => ingredient.name))
+const ingredientNames = computed(() => ingredientCatalog.value.map((ingredient) => typeof ingredient === 'string' ? ingredient : ingredient.name).filter(Boolean))
 const ingredientList = ref([])
 const supermarkets = ref([])
 const tuppers = ref([])
@@ -231,8 +231,13 @@ const calendarDetailOpen = ref(false)
 const calendarSelectedDay = ref(null)
 const shoppingSelectedDishes = ref(new Set())
 const shoppingSelectionInitialized = ref(false)
-const shoppingItems = ref([])
-const shoppingExcludedItems = ref([])
+const shoppingRangeDraft = reactive({ from: toIsoDate(new Date()), to: shiftDate(toIsoDate(new Date()), 6) })
+const shoppingRange = ref({ ...shoppingRangeDraft })
+const shoppingDayEntries = ref([])
+const shoppingLoadError = ref('')
+const shoppingGenerationWarning = ref('')
+const shoppingPendingOnly = ref(false)
+let shoppingRangeRequest = 0
 const shoppingGenerating = ref(false)
 const shoppingChecked = ref(new Set())
 const shoppingErrorDetails = ref('')
@@ -425,65 +430,72 @@ const calendarWeeks = computed(() =>
     calendarCells.value.slice(index * 7, index * 7 + 7),
   ),
 )
-const shoppingDayEntries = computed(() => dayEntries.value.slice(0, 7))
+const shoppingDishCatalog = computed(() => shoppingCatalog(dishes.value))
 const shoppingAvailableDishes = computed(() =>
   shoppingDayEntries.value.flatMap((entry) => {
     const day = currentDay(entry.isoDate, entry.weekStart)
     if (day.skipped) return []
     return enabledMeals.value.flatMap((meal) => {
       const mealState = day.meals[meal]
-      const mealDishes = mealState.items.filter((item) => String(item).trim())
-      return mealState.skipped || !mealDishes.length
-        ? []
-        : mealDishes.map((dish, dishIndex) => ({
-            dayDate: entry.isoDate,
-            date: entry.date,
-            meal,
-            dish,
-            isPurchased: dishes.value.find((item) => normalizeDishName(item.name) === normalizeDishName(dish))?.type === 'purchased',
-            ingredientCount: shoppingDishIngredientCount(dish),
-            key: `${entry.isoDate}-${meal}-${dishIndex}`,
-          }))
+      if (mealState.skipped) return []
+      const occurrences = new Map()
+      return mealState.items.filter((item) => String(item).trim()).map((name) => {
+        const normalized = shoppingName(name)
+        const occurrence = occurrences.get(normalized) || 0
+        occurrences.set(normalized, occurrence + 1)
+        const dish = shoppingDishCatalog.value.get(normalized)
+        return {
+          dayDate: entry.isoDate,
+          date: entry.date,
+          meal,
+          dish: name,
+          catalogDish: dish,
+          isPurchased: dish?.type === 'purchased',
+          ingredientCount: dish?.ingredients?.length || 0,
+          key: `${entry.isoDate}|${meal}|${normalized}|${occurrence}`,
+        }
+      })
     })
   }),
 )
-function shoppingDishIngredientCount(name) {
-  const normalized = normalizeDishName(name)
-  const dish = dishes.value.find((item) => normalizeDishName(item.name) === normalized)
-  if (dish?.type === 'purchased') return 0
-  return Array.isArray(dish?.ingredients) ? dish.ingredients.length : 0
-}
+const shoppingSelected = computed(() => shoppingAvailableDishes.value.filter((dish) => shoppingSelectedDishes.value.has(dish.key)))
+const shoppingDays = computed(() => {
+  const days = new Map()
+  shoppingAvailableDishes.value.forEach((dish) => {
+    if (!days.has(dish.dayDate)) days.set(dish.dayDate, { key: dish.dayDate, label: formatDay(dish.date), dishes: [] })
+    days.get(dish.dayDate).dishes.push(dish)
+  })
+  return [...days.values()]
+})
+const shoppingList = computed(() => buildShoppingList(shoppingSelected.value, dishes.value, ingredientList.value, group.value?.default_supermarket))
+const shoppingItems = computed(() => shoppingList.value.items)
+const shoppingExcludedItems = computed(() => shoppingList.value.excludedItems)
+const shoppingMissingDishes = computed(() => shoppingList.value.missingDishes)
 const shoppingMeals = computed(() => {
   const grouped = new Map()
-  shoppingAvailableDishes.value.forEach((dish) => {
-    if (!shoppingSelectedDishes.value.has(dish.key)) return
-    const groupKey = `${dish.dayDate}-${dish.meal}`
-    if (!grouped.has(groupKey)) {
-      grouped.set(groupKey, {
-        dayDate: dish.dayDate,
-        date: dish.date,
-        meal: dish.meal,
-        dishes: [],
-      })
-    }
-    grouped.get(groupKey).dishes.push(dish.dish)
+  shoppingSelected.value.forEach((dish) => {
+    const key = `${dish.dayDate}-${dish.meal}`
+    if (!grouped.has(key)) grouped.set(key, { dayDate: dish.dayDate, meal: dish.meal, dishes: [] })
+    grouped.get(key).dishes.push(dish.dish)
   })
   return [...grouped.values()]
 })
-const shoppingToBuyItems = computed(() =>
-  shoppingItems.value
-    .filter((_, index) => !shoppingChecked.value.has(index))
-    .map((item) => item.name),
-)
+const shoppingToBuyItems = computed(() => shoppingItems.value.filter((item) => !shoppingChecked.value.has(item.key)).map((item) => item.name))
 const shoppingSupermarketGroups = computed(() => {
   const groups = new Map()
-  shoppingItems.value.forEach((item, index) => {
-    const supermarket = item.supermarket || group.value?.default_supermarket || supermarkets.value[0] || { id: 0, name: 'Supermercado' }
+  shoppingItems.value.forEach((item) => {
+    const supermarket = item.supermarket
     const key = Number(supermarket.id || 0)
-    if (!groups.has(key)) groups.set(key, { supermarket, items: [] })
-    groups.get(key).items.push({ item, index })
+    if (!groups.has(key)) groups.set(key, { supermarket, items: [], pending: 0 })
+    const shoppingGroup = groups.get(key)
+    if (!shoppingChecked.value.has(item.key)) shoppingGroup.pending++
+    if (!shoppingPendingOnly.value || !shoppingChecked.value.has(item.key)) shoppingGroup.items.push(item)
   })
-  return [...groups.values()]
+  return [...groups.values()].filter((entry) => entry.items.length)
+})
+watch(shoppingItems, (items) => {
+  const available = new Set(items.map((item) => item.key))
+  shoppingChecked.value = new Set([...shoppingChecked.value].filter((key) => available.has(key)))
 })
 const hasUnreadNotifications = computed(() => notificationUnreadCount.value > 0)
 const defaultRouletteDishes = [
@@ -784,7 +796,6 @@ async function loadDashboardRange() {
     applyContext(context)
     applyRangeData(data, true)
     dayEntries.value = buildRangeDayEntries(data)
-    initializeShoppingSelection()
     nextRangeStart.value = shiftDate(rangeEnd, 1)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
@@ -877,60 +888,85 @@ async function loadTasks() {
   }
 }
 
-function initializeShoppingSelection() {
-  if (shoppingSelectionInitialized.value || !shoppingAvailableDishes.value.length) return
-  shoppingSelectedDishes.value = new Set(shoppingAvailableDishes.value.map((dish) => dish.key))
-  shoppingSelectionInitialized.value = true
-}
-
 async function loadShoppingRange() {
   if (!user.value) return
-  loading.value = true
-  error.value = ''
-  try {
-    if (!dayEntries.value.length) {
-      const rangeStart = toIsoDate(new Date())
-      const rangeEnd = shiftDate(rangeStart, RANGE_PAGE_DAYS - 1)
-      const data = await fetchRange(rangeStart, rangeEnd, false)
-      const context = await loadShoppingContext()
-      applyContext(context)
-      applyRangeData(data, true)
-      dayEntries.value = buildRangeDayEntries(data)
-      nextRangeStart.value = shiftDate(rangeEnd, 1)
-    } else {
-      applyContext(await loadShoppingContext())
-    }
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
-    if (isShopping.value) showShoppingError('No se ha podido cargar el menú', error.value)
-  } finally {
-    loading.value = false
+  const { from, to } = shoppingRangeDraft
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) {
+    shoppingLoadError.value = 'Elige una fecha final igual o posterior a la inicial.'
+    return
   }
-  initializeShoppingSelection()
+  if (to > shiftDate(from, 13)) {
+    shoppingLoadError.value = 'Puedes preparar la compra de hasta 14 días a la vez.'
+    return
+  }
+  const request = ++shoppingRangeRequest
+  loading.value = true
+  shoppingLoadError.value = ''
+  error.value = ''
+  const previous = shoppingAvailableDishes.value
+  try {
+    await refreshToken()
+    const [data, context] = await Promise.all([
+      getJson(`menudiario/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&include_context=0`, userToken.value),
+      getJson('menudiario/ingredients', userToken.value),
+    ])
+    if (request !== shoppingRangeRequest || !user.value) return
+    applyContext(context)
+    applyRangeData(data)
+    shoppingDayEntries.value = buildRangeDayEntries(data)
+    shoppingRange.value = { from, to }
+    shoppingSelectedDishes.value = reconcileShoppingSelection(shoppingAvailableDishes.value, previous, shoppingSelectedDishes.value, shoppingSelectionInitialized.value)
+    shoppingSelectionInitialized.value = true
+    shoppingGenerationWarning.value = ''
+  } catch (reason) {
+    if (request === shoppingRangeRequest) shoppingLoadError.value = reason instanceof Error ? reason.message : 'No se pudo cargar el menú.'
+  } finally {
+    if (request === shoppingRangeRequest) loading.value = false
+  }
 }
 
-async function loadShoppingContext() {
-  await refreshToken()
-  return getJson('menudiario/ingredients', userToken.value)
+function changeShoppingRange(days) {
+  const from = toIsoDate(new Date())
+  Object.assign(shoppingRangeDraft, { from, to: shiftDate(from, days - 1) })
+  void loadShoppingRange()
 }
 
-function toggleShoppingDish(dishKey) {
+function toggleShoppingDish(key) {
   const selected = new Set(shoppingSelectedDishes.value)
-  if (selected.has(dishKey)) selected.delete(dishKey)
-  else selected.add(dishKey)
+  if (selected.has(key)) selected.delete(key)
+  else selected.add(key)
   shoppingSelectedDishes.value = selected
-  shoppingItems.value = []
+  shoppingGenerationWarning.value = ''
 }
 
-function toggleShoppingItem(index) {
+function selectShoppingDishes(keys, selected) {
+  const next = new Set(shoppingSelectedDishes.value)
+  keys.forEach((key) => selected ? next.add(key) : next.delete(key))
+  shoppingSelectedDishes.value = next
+  shoppingGenerationWarning.value = ''
+}
+
+function toggleShoppingItem(key) {
   const checked = new Set(shoppingChecked.value)
-  if (checked.has(index)) checked.delete(index)
-  else checked.add(index)
+  if (checked.has(key)) checked.delete(key)
+  else checked.add(key)
   shoppingChecked.value = checked
 }
 
-function shoppingItemChecked(index) {
-  return shoppingChecked.value.has(index)
+function editShoppingDish(entry) {
+  dishIngredientsDish.value = entry.dish && !entry.dish.group_photo_only ? entry.dish : { id: 0, name: entry.name, type: 'home' }
+  dishIngredientsDraft.value = dishIngredientsDish.value.ingredients?.length ? [...dishIngredientsDish.value.ingredients] : ['']
+  dishIngredientsEditorOpen.value = true
+}
+
+async function ensureIngredientEditorDish() {
+  if (Number(dishIngredientsDish.value?.id) > 0) return
+  const name = dishIngredientsDish.value?.name
+  if (!name) throw new Error('Elige un plato antes de guardar sus ingredientes.')
+  const data = await postJson('menudiario/save_dish', userToken.value, { name, type: 'home', category: 'other' })
+  if (Array.isArray(data.dishes)) dishes.value = data.dishes
+  dishIngredientsDish.value = shoppingCatalog(dishes.value).get(shoppingName(name))
+  if (!Number(dishIngredientsDish.value?.id)) throw new Error('No se pudo crear la ficha del plato. Vuelve a intentarlo.')
 }
 
 function formatShoppingErrorDetails(reason) {
@@ -1003,63 +1039,40 @@ async function sendShoppingListToAlexa() {
 }
 
 async function generateShoppingList() {
-  if (shoppingGenerating.value || !shoppingMeals.value.length) return
+  if (shoppingGenerating.value || !shoppingMissingDishes.value.length) return
   shoppingGenerating.value = true
-  error.value = ''
+  shoppingGenerationWarning.value = ''
   shoppingErrorDetails.value = ''
+  const requestedUser = user.value
+  const requestedGroup = group.value?.id
+  const meals = shoppingMeals.value.map((meal) => ({ day_date: meal.dayDate, meal: meal.meal, dishes: [...meal.dishes] }))
   try {
     await refreshToken()
-    const data = await postJson('menudiario/generate_shopping_list', userToken.value, {
-      meals: shoppingMeals.value.map((meal) => ({
-        day_date: meal.dayDate,
-        meal: meal.meal,
-        dishes: meal.dishes,
-      })),
-    })
-    shoppingItems.value = (data.items || [])
-      .map((item) =>
-        typeof item === 'string'
-          ? { name: item, dishes: [], supermarket: null }
-          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [], supermarket: item?.supermarket || null },
-      )
-      .filter((item) => item.name)
-    shoppingExcludedItems.value = (data.excluded_items || [])
-      .map((item) =>
-        typeof item === 'string'
-          ? { name: item, dishes: [], supermarket: null }
-          : { name: item?.name || '', dishes: Array.isArray(item?.dishes) ? item.dishes : [], supermarket: item?.supermarket || null },
-      )
-      .filter((item) => item.name)
+    const data = await postJson('menudiario/generate_shopping_list', userToken.value, { meals })
+    if (user.value !== requestedUser || group.value?.id !== requestedGroup) return
     if (Array.isArray(data.dishes)) dishes.value = data.dishes
     if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
     if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
     if (Array.isArray(data.supermarkets)) supermarkets.value = data.supermarkets
-    if (data.group) group.value = data.group
-    shoppingChecked.value = new Set()
-    shoppingErrorDetails.value = ''
-    notice.value = 'Lista generada. Revísala antes de ir a comprar.'
-    window.setTimeout(() => {
-      notice.value = ''
-    }, 3500)
+    shoppingGenerationWarning.value = shoppingMissingDishes.value.length
+      ? 'Algunos platos siguen sin ingredientes. Puedes añadirlos en su ficha o volver a intentar completarlos.'
+      : ''
+    if (!shoppingMissingDishes.value.length) notice.value = 'Ingredientes completados. Tu lista está actualizada.'
   } catch (reason) {
-    error.value =
-      reason instanceof Error ? reason.message : 'No se pudo generar la lista de la compra.'
+    if (user.value !== requestedUser || group.value?.id !== requestedGroup) return
+    shoppingGenerationWarning.value = 'No se pudieron completar los ingredientes. Tu lista conserva los ingredientes guardados; puedes añadir los que faltan en la ficha de cada plato.'
     shoppingErrorDetails.value = formatShoppingErrorDetails(reason)
-    showShoppingError(
-      'No se ha podido generar la lista',
-      error.value,
-      shoppingErrorDetails.value,
-      true,
-    )
   } finally {
     shoppingGenerating.value = false
   }
 }
 
 async function copyShoppingList() {
-  if (!shoppingItems.value.length) return
+  if (!shoppingToBuyItems.value.length) return
   const text = shoppingSupermarketGroups.value
-    .map((shoppingGroup) => `${shoppingGroup.supermarket.name}\n${shoppingGroup.items.map(({ item }) => `☐ ${item.name}`).join('\n')}`)
+    .map((shoppingGroup) => ({ ...shoppingGroup, items: shoppingGroup.items.filter((item) => !shoppingChecked.value.has(item.key)) }))
+    .filter((shoppingGroup) => shoppingGroup.items.length)
+    .map((shoppingGroup) => `${shoppingGroup.supermarket.name}\n${shoppingGroup.items.map((item) => `☐ ${item.name}`).join('\n')}`)
     .join('\n\n')
   try {
     await navigator.clipboard.writeText(text)
@@ -1644,6 +1657,7 @@ async function deleteIngredient(ingredient) {
   }
 }
 function closeDishIngredients() {
+  if (dishIngredientsSaving.value || dishIngredientsGenerating.value) return
   dishIngredientsEditorOpen.value = false
   dishIngredientsDish.value = null
   dishIngredientsDraft.value = []
@@ -1661,6 +1675,7 @@ async function saveDishIngredients() {
   error.value = ''
   try {
     await refreshToken()
+    await ensureIngredientEditorDish()
     const ingredients = dishIngredientsDraft.value.map((item) => item.trim()).filter(Boolean)
     const data = await postJson('menudiario/save_dish_ingredients', userToken.value, {
       dish_id: dishIngredientsDish.value.id,
@@ -1670,6 +1685,7 @@ async function saveDishIngredients() {
     if (Array.isArray(data.ingredients)) ingredientCatalog.value = data.ingredients
     if (Array.isArray(data.ingredient_list)) ingredientList.value = data.ingredient_list
     notice.value = ingredients.length ? 'Ingredientes guardados.' : 'Ingredientes eliminados.'
+    dishIngredientsSaving.value = false
     closeDishIngredients()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'No se pudieron guardar los ingredientes.'
@@ -1679,7 +1695,7 @@ async function saveDishIngredients() {
 }
 async function generateDishIngredients() {
   if (!dishIngredientsDish.value || dishIngredientsGenerating.value) return
-  if (dishDetailDraft.type === 'purchased' || dishIngredientsDish.value.type === 'purchased') {
+  if ((dishEditorOpen.value && dishDetailDraft.type === 'purchased') || dishIngredientsDish.value.type === 'purchased') {
     error.value = 'Los platos comprados no llevan ingredientes.'
     return
   }
@@ -1687,6 +1703,7 @@ async function generateDishIngredients() {
   error.value = ''
   try {
     await refreshToken()
+    await ensureIngredientEditorDish()
     const data = await postJson('menudiario/generate_dish_ingredients', userToken.value, {
       dish_id: dishIngredientsDish.value.id,
     })
@@ -1933,8 +1950,11 @@ async function logout() {
   menuOpen.value = false
   shoppingSelectedDishes.value = new Set()
   shoppingSelectionInitialized.value = false
-  shoppingItems.value = []
-  shoppingExcludedItems.value = []
+  shoppingDayEntries.value = []
+  shoppingRangeRequest++
+  shoppingLoadError.value = ''
+  shoppingGenerationWarning.value = ''
+  shoppingPendingOnly.value = false
   supermarkets.value = []
   shoppingChecked.value = new Set()
   ingredientMergeSelected.value = new Set()
@@ -3515,7 +3535,7 @@ onUnmounted(() => {
           </div>
           <div v-if="sortedIngredients.length" class="ingredient-pagination"><span>Mostrando {{ ingredientPageStart }}–{{ ingredientPageEnd }} de {{ sortedIngredients.length }} ingredientes</span><div class="pagination-controls"><button type="button" class="pagination-button" :disabled="ingredientPage === 1" aria-label="Página anterior de ingredientes" @click="setIngredientPage(ingredientPage - 1)"><PhCaretLeft :size="17" /></button><button v-for="page in ingredientPageNumbers" :key="page" type="button" class="pagination-button" :class="{ active: ingredientPage === page }" :aria-current="ingredientPage === page ? 'page' : undefined" :aria-label="`Página ${page}`" @click="setIngredientPage(page)">{{ page }}</button><button type="button" class="pagination-button" :disabled="ingredientPage === ingredientPageCount" aria-label="Página siguiente de ingredientes" @click="setIngredientPage(ingredientPage + 1)"><PhCaretRight :size="17" /></button></div></div>
         </section>
-        <section v-else-if="isDishMerge" class="ingredient-merge-page">
+        <section v-else-if="isDishMerge" class="ingredient-merge-page dish-merge-page">
           <div class="page-heading ingredient-merge-page-heading">
             <div>
               <p class="eyebrow">GESTIÓN DEL CATÁLOGO</p>
@@ -3822,178 +3842,37 @@ onUnmounted(() => {
           </section>
         </section>
         <section v-else-if="isShopping" class="shopping-page">
-          <div class="page-heading shopping-heading">
-            <div>
-              <p class="eyebrow">ASISTENTE DE COMPRA</p>
-              <h1>Lista de la compra</h1>
-              <p class="muted">
-                Dile a la IA qué vas a cocinar y tendrás los ingredientes agrupados en segundos.
-              </p>
-            </div>
-          </div>
-          <div class="shopping-layout">
-            <section class="shopping-builder shopping-selection-panel" aria-labelledby="shopping-builder-title">
-              <div class="shopping-section-heading">
-                <div class="shopping-section-icon">
-                  <PhCalendarCheck :size="22" weight="regular" />
-                </div>
-                <div>
-                  <p class="eyebrow">PRÓXIMOS PLATOS</p>
-                  <h2 id="shopping-builder-title">¿Qué vas a cocinar?</h2>
-                  <p class="muted">
-                    Todos tus próximos platos están seleccionados. Desmarca los que no vayas a cocinar.
-                  </p>
-                </div>
-              </div>
-              <div v-if="loading" class="shopping-skeleton-list" aria-hidden="true">
-                <div v-for="day in 7" :key="day" class="shopping-day-option skeleton-shopping-day">
-                  <span class="skeleton-square"></span>
-                  <span class="skeleton-line skeleton-shopping-title"></span>
-                  <span class="skeleton-line skeleton-shopping-meta"></span>
-                </div>
-              </div>
-              <div v-else-if="!shoppingAvailableDishes.length" class="shopping-empty">
-                <PhCalendarBlank :size="30" weight="regular" />
-                <strong>Aún no hay platos próximos</strong>
-                <span>Añade platos a tu planificador para preparar una lista.</span>
-              </div>
-              <div v-else class="shopping-meal-selection">
-                <button
-                  v-for="dish in shoppingAvailableDishes"
-                  :key="dish.key"
-                  type="button"
-                  class="shopping-meal-option"
-            :class="{ selected: shoppingSelectedDishes.has(dish.key) }"
-                  :aria-pressed="shoppingSelectedDishes.has(dish.key)"
-                  @click="toggleShoppingDish(dish.key)"
-                >
-                  <span class="shopping-meal-check"><PhCheck :size="15" weight="bold" /></span>
-                  <span class="meal-icon"><component :is="mealIcons[dish.meal]" :size="19" /></span>
-                  <span class="shopping-meal-option-copy">
-                    <small
-                      >{{ formatDay(dish.date) }} · {{ mealLabels[dish.meal] }} ·
-                      {{ dish.isPurchased ? 'plato comprado' : `${dish.ingredientCount} ${dish.ingredientCount === 1 ? 'ingrediente' : 'ingredientes'}` }}</small
-                    >
-                    <strong>{{ dish.dish }}</strong>
-                  </span>
-                </button>
-              </div>
-              <div class="shopping-selection-footer">
-                <span
-                  ><PhForkKnife :size="18" /> {{ shoppingSelectedDishes.size }} de
-                  {{ shoppingAvailableDishes.length }} platos seleccionados</span
-                >
-                <span class="shopping-selection-note">Puedes cambiar esta selección cuando quieras.</span>
-              </div>
-              <div class="shopping-wizard-actions">
-                <span>La lista se generará con los platos marcados</span>
-                <button
-                  type="button"
-                  class="primary-button"
-                  :disabled="!shoppingMeals.length || shoppingGenerating"
-                  @click="generateShoppingList"
-                >
-                  Generar lista <PhSparkle :size="17" weight="fill" />
-                </button>
-              </div>
-            </section>
-            <section class="shopping-result" aria-labelledby="shopping-result-title">
-              <div class="shopping-section-heading">
-                <div class="shopping-section-icon result-icon">
-                  <PhShoppingCart :size="22" weight="regular" />
-                </div>
-                <div>
-                  <p class="eyebrow">RESULTADO</p>
-                  <h2 id="shopping-result-title">Tu lista</h2>
-                  <p class="muted">
-                    Revisa la propuesta, marca lo que ya tengas y envíala a Alexa.
-                  </p>
-                </div>
-              </div>
-              <div
-                v-if="shoppingGenerating"
-                class="shopping-generating"
-                role="status"
-                aria-live="polite"
-              >
-                <div class="shopping-generating-orbit"><PhSparkle :size="25" weight="fill" /></div>
-                <strong>Preparando tu compra…</strong>
-                <span>Estoy agrupando ingredientes repetidos.</span>
-              </div>
-              <div v-else-if="shoppingItems.length || shoppingExcludedItems.length" class="shopping-result-content">
-                <div class="shopping-result-toolbar">
-                  <span
-                    ><strong>{{ shoppingItems.length - shoppingChecked.size }}</strong> por
-                    comprar</span
-                  >
-                  <button v-if="shoppingItems.length" type="button" class="secondary-button" @click="copyShoppingList">
-                    <PhNote :size="17" /> Copiar lista
-                  </button>
-                  <a
-                    v-if="shoppingItems.length"
-                    class="secondary-button shopping-alexa-link"
-                    :href="shoppingAlexaUrl"
-                    @click.prevent="sendShoppingListToAlexa"
-                  >
-                    <PhSpeakerHigh :size="17" /> Enviar a Alexa
-                  </a>
-                </div>
-                <section v-for="shoppingGroup in shoppingSupermarketGroups" :key="shoppingGroup.supermarket.id" class="shopping-supermarket-group">
-                  <div class="shopping-supermarket-heading">
-                    <img :class="{ 'supermarket-logo-dark': isDarkSupermarketLogo(shoppingGroup.supermarket) }" :src="supermarketLogo(shoppingGroup.supermarket)" :alt="`Logo de ${shoppingGroup.supermarket.name}`" />
-                    <div><strong>{{ shoppingGroup.supermarket.name }}</strong><small>{{ shoppingGroup.items.length }} {{ shoppingGroup.items.length === 1 ? 'producto' : 'productos' }}</small></div>
-                  </div>
-                  <div class="shopping-items-list">
-                    <label
-                      v-for="entry in shoppingGroup.items"
-                      :key="`${entry.item.name}-${entry.index}`"
-                      class="shopping-item"
-                      :class="{ checked: shoppingItemChecked(entry.index) }"
-                    >
-                      <input
-                        type="checkbox"
-                        :checked="shoppingItemChecked(entry.index)"
-                        @change="toggleShoppingItem(entry.index)"
-                      />
-                      <span class="shopping-item-check"><PhCheck :size="14" weight="bold" /></span>
-                      <span class="shopping-item-copy">
-                        <strong>{{ entry.item.name }}</strong>
-                        <small v-if="entry.item.dishes?.length">{{ entry.item.dishes.join(' · ') }}</small>
-                      </span>
-                    </label>
-                  </div>
-                </section>
-                <div v-if="shoppingExcludedItems.length" class="shopping-excluded-section">
-                  <div class="shopping-excluded-heading">
-                    <PhShoppingCart :size="17" />
-                    <strong>No añadir a la compra</strong>
-                    <small>Marcados así en Ingredientes</small>
-                  </div>
-                  <div class="shopping-items-list shopping-disabled-items">
-                    <div v-for="item in shoppingExcludedItems" :key="`excluded-${item.name}`" class="shopping-item disabled-shopping-item" aria-disabled="true">
-                      <span class="shopping-item-check"><PhX :size="13" weight="bold" /></span>
-                      <span class="shopping-item-copy">
-                        <strong>{{ item.name }}</strong>
-                        <small v-if="item.dishes?.length">{{ item.dishes.join(' · ') }}</small>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div class="shopping-result-actions">
-                  <button type="button" class="shopping-regenerate" @click="generateShoppingList">
-                    <PhArrowsClockwise :size="17" /> Generar otra propuesta
-                  </button>
-                </div>
-              </div>
-              <div v-else class="shopping-result-empty">
-                <div class="shopping-result-empty-icon">
-                  <PhSparkle :size="29" weight="duotone" />
-                </div>
-                <h3>Tu lista aparecerá aquí</h3>
-                <p>Selecciona los platos que vas a cocinar y pulsa «Generar lista».</p>
-              </div>
-            </section>
-          </div>
+          <ShoppingPage
+            :days="shoppingDays"
+            :selected="shoppingSelectedDishes"
+            :range-draft="shoppingRangeDraft"
+            :range="shoppingRange"
+            :loading="loading"
+            :load-error="shoppingLoadError"
+            :generating="shoppingGenerating"
+            :warning="shoppingGenerationWarning"
+            :missing="shoppingMissingDishes"
+            :items="shoppingItems"
+            :excluded="shoppingExcludedItems"
+            :groups="shoppingSupermarketGroups"
+            :checked="shoppingChecked"
+            :pending-only="shoppingPendingOnly"
+            :supermarket-logo="supermarketLogo"
+            :is-dark-logo="isDarkSupermarketLogo"
+            @range-field="(field, value) => shoppingRangeDraft[field] = value"
+            @load="loadShoppingRange"
+            @preset="changeShoppingRange"
+            @toggle-dish="toggleShoppingDish"
+            @select-dishes="selectShoppingDishes"
+            @toggle-item="toggleShoppingItem"
+            @pending-only="shoppingPendingOnly = $event"
+            @reset-checks="shoppingChecked = new Set()"
+            @complete="generateShoppingList"
+            @edit-dish="editShoppingDish"
+            @plan="goToDashboard"
+            @copy="copyShoppingList"
+            @alexa="sendShoppingListToAlexa"
+          />
           <dialog
             v-if="shoppingErrorModal"
             v-modal="closeShoppingError"
@@ -4019,7 +3898,7 @@ onUnmounted(() => {
                 </button>
               </div>
               <p class="shopping-error-message">{{ shoppingErrorModal.message }}</p>
-              <details v-if="shoppingErrorModal.details" class="shopping-error-details" open>
+              <details v-if="shoppingErrorModal.details" class="shopping-error-details">
                 <summary>Ver detalle técnico</summary>
                 <pre>{{ shoppingErrorModal.details }}</pre>
               </details>
