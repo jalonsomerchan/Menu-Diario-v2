@@ -156,6 +156,10 @@ const loadingMore = ref(false)
 const dishesLoading = ref(false)
 const ingredientsLoading = ref(false)
 const editorOpen = ref(false)
+const dayEditorCard = ref(null)
+const expandedDayAlert = ref('')
+const dayEditorAnnouncement = ref('')
+const dayAlertValidation = ref(null)
 const saving = ref(false)
 const photoUploadingDish = ref('')
 const photoDeletingDish = ref('')
@@ -2167,6 +2171,9 @@ async function openEditor(dayKey, requestedWeek = '') {
   enabledMeals.value.forEach((meal) => {
     if (!draftDay.value.meals[meal].items.length) draftDay.value.meals[meal].items.push('')
   })
+  expandedDayAlert.value = ''
+  dayEditorAnnouncement.value = ''
+  dayAlertValidation.value = null
   editorOpen.value = true
 }
 function closeEditor() {
@@ -2565,8 +2572,39 @@ function restoreGlobalAlertDefault(alert) {
   alert.enabled = Boolean(definition.default_enabled)
   alert.overridden = false
 }
-function addCustomAlert(meal) {
-  draftDay.value.meals[meal].alerts.push({
+function dayAlertId(meal, alert) {
+  return `day-${meal}-alert-${alert.type === 'global' ? `global-${alert.alert_id}` : alert.id}`
+}
+function dayAlertName(alert) {
+  return String(alert.name || '').trim() || 'Nuevo aviso'
+}
+function toggleDayAlert(meal, alert) {
+  const id = dayAlertId(meal, alert)
+  expandedDayAlert.value = expandedDayAlert.value === id ? '' : id
+}
+async function focusDayAlert(meal, alert, field = 'name') {
+  const id = dayAlertId(meal, alert)
+  expandedDayAlert.value = id
+  await nextTick()
+  const input = dayEditorCard.value?.querySelector(`[id="${id}-${field}"]`)
+  if (!input) return
+  input.closest('details').open = true
+  input.focus({ preventScroll: true })
+  input.scrollIntoView({ block: 'nearest' })
+}
+async function addCustomAlert(meal) {
+  if (!draftDay.value || saving.value || sendingAlertKey.value) return
+  const alerts = draftDay.value.meals[meal].alerts
+  // Reopen an unfinished notice instead of accumulating empty drafts on repeated clicks.
+  const unfinished = alerts.find(
+    (alert) => alert.type === 'custom' && !String(alert.name || '').trim(),
+  )
+  if (unfinished) {
+    dayEditorAnnouncement.value = 'Escribe el nombre del nuevo aviso antes de añadir otro.'
+    await focusDayAlert(meal, unfinished)
+    return
+  }
+  const alert = {
     type: 'custom',
     id: customAlertId(),
     name: '',
@@ -2575,13 +2613,27 @@ function addCustomAlert(meal) {
     icon: 'bell',
     message: '',
     enabled: true,
-  })
+  }
+  alerts.push(alert)
+  dayEditorAnnouncement.value = `Nuevo aviso añadido para ${mealLabels[meal].toLowerCase()}.`
+  await focusDayAlert(meal, alert)
 }
-function removeCustomAlert(meal, index) {
-  draftDay.value.meals[meal].alerts.splice(index, 1)
+async function removeCustomAlert(meal, index) {
+  if (saving.value || sendingAlertKey.value) return
+  const alerts = draftDay.value.meals[meal].alerts
+  const removed = alerts[index]
+  if (!removed || removed.type !== 'custom') return
+  alerts.splice(index, 1)
+  if (dayAlertValidation.value?.id === dayAlertId(meal, removed)) dayAlertValidation.value = null
+  if (expandedDayAlert.value === dayAlertId(meal, removed)) expandedDayAlert.value = ''
+  dayEditorAnnouncement.value = `Aviso ${dayAlertName(removed)} eliminado de ${mealLabels[meal].toLowerCase()}.`
+  await nextTick()
+  const nextAlert = alerts[index] || alerts[index - 1]
+  const targetId = nextAlert ? `${dayAlertId(meal, nextAlert)}-toggle` : `day-${meal}-add-alert`
+  dayEditorCard.value?.querySelector(`[id="${targetId}"]`)?.focus()
 }
 function alertActionKey(meal, alert) {
-  return [meal, alert.type, alert.alert_id ?? alert.source_index ?? alert.id].join(':')
+  return [meal, alert.type, alert.alert_id ?? alert.id].join(':')
 }
 async function sendAlertNow(meal, alert) {
   const actionKey = alertActionKey(meal, alert)
@@ -2591,6 +2643,21 @@ async function sendAlertNow(meal, alert) {
   try {
     const saved = await saveDay(false)
     if (!saved) return
+    let customIndex = null
+    if (alert.type === 'custom') {
+      // The API omits unchanged global defaults, so use the saved list's index.
+      const customPosition = draftDay.value.meals[meal].alerts
+        .filter((entry) => entry.type === 'custom')
+        .indexOf(alert)
+      const savedAlerts =
+        menus.value.get(draftWeekStart.value)?.days?.[draftDayKey.value]?.meals?.[meal]?.alerts ||
+        []
+      customIndex = savedAlerts.flatMap((entry, index) => (entry.type === 'global' ? [] : [index]))[
+        customPosition
+      ]
+      if (customIndex === undefined)
+        throw new Error('No se pudo recuperar el aviso guardado. Vuelve a intentarlo.')
+    }
     await refreshToken()
     const data = await postJson('telegram/send_alert_now', userToken.value, {
       week_start: draftWeekStart.value,
@@ -2598,7 +2665,7 @@ async function sendAlertNow(meal, alert) {
       meal,
       alert_type: alert.type,
       alert_id: alert.type === 'global' ? alert.alert_id : 0,
-      custom_index: alert.type === 'custom' ? alert.source_index : null,
+      custom_index: customIndex,
     })
     notice.value = `Aviso enviado (${data.sent} ${data.sent === 1 ? 'persona' : 'personas'}).`
     window.setTimeout(() => {
@@ -2729,6 +2796,23 @@ async function deleteTask(task) {
   }
 }
 async function saveDay(closeAfter = true) {
+  if (saving.value) return false
+  for (const meal of enabledMeals.value) {
+    const invalid = draftDay.value.meals[meal].alerts.find(
+      (alert) => alert.type === 'custom' && (!String(alert.name || '').trim() || !alert.time),
+    )
+    if (!invalid) continue
+    const field = String(invalid.name || '').trim() ? 'time' : 'name'
+    dayAlertValidation.value = {
+      id: dayAlertId(meal, invalid),
+      field,
+      message:
+        field === 'name' ? 'Escribe un nombre para este aviso.' : 'Elige una hora para este aviso.',
+    }
+    await focusDayAlert(meal, invalid, field)
+    return false
+  }
+  dayAlertValidation.value = null
   saving.value = true
   error.value = ''
   try {
@@ -4534,25 +4618,38 @@ onUnmounted(() => {
       </form>
     </dialog>
 
-    <dialog v-if="editorOpen" v-modal="closeEditor" class="modal-backdrop day-editor-backdrop" @click.self="closeEditor">
-      <div class="modal-card day-editor-card">
+    <dialog
+      v-if="editorOpen"
+      v-modal="closeEditor"
+      class="modal-backdrop day-editor-backdrop"
+      aria-describedby="day-editor-help"
+      @click.self="closeEditor"
+    >
+      <div ref="dayEditorCard" class="modal-card day-editor-card">
         <div class="modal-header">
           <div>
             <p class="eyebrow">EDITAR DÍA</p>
-            <h2>{{ draftTitle }}</h2>
+            <h2 tabindex="-1" autofocus>{{ draftTitle }}</h2>
+            <p id="day-editor-help" class="day-editor-help">
+              Configura las comidas y sus avisos. Guarda el día para aplicar los cambios.
+            </p>
           </div>
           <div class="modal-header-actions">
             <button type="button" class="roulette-trigger" @click="openRoulette">
               <PhDiceFive :size="18" weight="duotone" /> Ruleta</button
-            ><button class="icon-button" aria-label="Cerrar editor" @click="closeEditor">
+            ><button
+              type="button"
+              class="icon-button"
+              aria-label="Cerrar editor"
+              :disabled="saving"
+              @click="closeEditor"
+            >
               <PhX :size="22" weight="regular" />
             </button>
           </div>
         </div>
-        <div
-          class="editor-scroll"
-          :class="`meal-count-${enabledMeals.length}`"
-        >
+        <p class="sr-only" role="status" aria-atomic="true">{{ dayEditorAnnouncement }}</p>
+        <div class="editor-scroll" :class="`meal-count-${enabledMeals.length}`">
           <section
             v-if="dailyOptions.filter((option) => option.active).length"
             class="editor-options"
@@ -4563,9 +4660,7 @@ onUnmounted(() => {
                 <span class="editor-section-kicker">CONTEXTO</span>
                 <strong id="day-conditions-title">Condiciones del día</strong>
               </div>
-              <span class="editor-section-count"
-                >{{ draftDay.option_ids.length }} seleccionadas</span
-              >
+              <span class="editor-section-count">{{ draftDay.option_ids.length }} seleccionadas</span>
             </div>
             <div class="option-check-list">
               <label
@@ -4603,7 +4698,12 @@ onUnmounted(() => {
                   <small>{{ mealDraftSummary(meal) }}</small>
                 </span>
               </span>
-              <button class="text-button meal-add-button" @click="addDish(meal)">
+              <button
+                type="button"
+                class="text-button meal-add-button"
+                :aria-label="`Añadir plato para ${mealLabels[meal].toLowerCase()}`"
+                @click="addDish(meal)"
+              >
                 <PhPlus :size="16" weight="regular" /> Añadir plato
               </button>
             </div>
@@ -4631,147 +4731,239 @@ onUnmounted(() => {
               </div>
             </div>
             <details class="meal-more-options">
-              <summary>
+              <summary
+                :aria-label="`Avisos y nota de ${mealLabels[meal].toLowerCase()}: ${mealMoreOptionsSummary(meal)}`"
+              >
                 <span class="more-options-summary-copy">
-                  <span class="more-options-icon"><PhGear :size="16" weight="regular" /></span>
+                  <span class="more-options-icon"
+                    ><PhGear :size="16" weight="regular" aria-hidden="true"
+                  /></span>
                   <span
                     ><strong>Avisos y nota</strong
                     ><small>{{ mealMoreOptionsSummary(meal) }}</small></span
                   >
                 </span>
-                <PhCaretDown :size="17" weight="bold" class="more-options-chevron" />
+                <PhCaretDown
+                  :size="17"
+                  weight="bold"
+                  class="more-options-chevron"
+                  aria-hidden="true"
+                />
               </summary>
               <div class="more-options-content">
                 <div class="more-options-section-heading">
                   <div>
                     <strong>Avisos</strong>
-                    <small>Activa recordatorios para esta comida.</small>
+                    <small>Abre un aviso para editarlo. Se añade uno cada vez.</small>
                   </div>
                   <button
                     type="button"
+                    :id="`day-${meal}-add-alert`"
                     class="add-alert-button compact-add-alert"
+                    :aria-label="`Añadir aviso para ${mealLabels[meal].toLowerCase()}`"
+                    :disabled="saving || Boolean(sendingAlertKey)"
                     @click="addCustomAlert(meal)"
                   >
-                    <PhPlus :size="15" weight="regular" /> Añadir aviso
+                    <PhPlus :size="15" weight="regular" aria-hidden="true" /> Añadir aviso
                   </button>
                 </div>
+                <p v-if="!draftDay.meals[meal].alerts.length" class="day-alert-empty">
+                  Aún no hay avisos para esta comida.
+                </p>
                 <div class="meal-alert-list">
                   <div
                     v-for="alert in draftDay.meals[meal].alerts"
                     :key="alert.type === 'global' ? `global-${alert.alert_id}` : alert.id"
                     class="meal-alert-row"
+                    :class="{ 'day-alert-expanded': expandedDayAlert === dayAlertId(meal, alert) }"
                   >
-                    <label class="reminder-check"
-                      ><input
-                        v-model="alert.enabled"
-                        type="checkbox"
-                        @change="alert.type === 'global' ? setGlobalAlertEnabled(alert) : null"
-                      /><span
-                        ><strong>{{ alert.name }}</strong
-                        ><small>{{
-                          alert.type === 'global'
-                            ? alert.overridden
-                              ? 'Aviso global personalizado para esta comida'
-                              : 'Aviso global por defecto'
-                            : 'Aviso solo para esta comida'
-                        }}</small></span
-                      ></label
-                    >
-                    <div class="meal-alert-meta">
-                      <span class="meal-alert-time"
-                        ><component
-                          :is="alertIcon(alert)"
-                          :size="15"
-                          weight="regular"
-                          aria-hidden="true"
+                    <div class="day-alert-heading">
+                      <h3 class="day-alert-title">
+                        <button
+                          :id="`${dayAlertId(meal, alert)}-toggle`"
+                          type="button"
+                          class="day-alert-toggle"
+                          :aria-expanded="expandedDayAlert === dayAlertId(meal, alert)"
+                          :aria-controls="`${dayAlertId(meal, alert)}-panel`"
+                          @click="toggleDayAlert(meal, alert)"
+                        >
+                          <component :is="alertIcon(alert)" :size="19" aria-hidden="true" />
+                          <span class="day-alert-summary">
+                            <strong>{{ dayAlertName(alert) }}</strong>
+                            <small
+                              >{{ alert.time || 'Sin hora' }} ·
+                              {{ alertDayOffsetLabel(alert.day_offset) }}</small
+                            >
+                            <small>{{
+                              alert.type === 'global' ? 'Aviso global' : 'Solo para esta comida'
+                            }}</small>
+                          </span>
+                          <PhCaretDown :size="18" class="day-alert-chevron" aria-hidden="true" />
+                        </button>
+                      </h3>
+                      <label class="day-alert-enabled">
+                        <input
+                          v-model="alert.enabled"
+                          type="checkbox"
+                          :aria-label="`Activar aviso ${dayAlertName(alert)} para ${mealLabels[meal].toLowerCase()}`"
+                          :disabled="saving || Boolean(sendingAlertKey)"
+                          @change="alert.type === 'global' ? setGlobalAlertEnabled(alert) : null"
                         />
-                        {{ alert.time }} · {{ alertDayOffsetLabel(alert.day_offset) }}</span
-                      ><button
-                        type="button"
-                        class="send-alert-button"
-                        :disabled="Boolean(sendingAlertKey) || saving"
-                        @click="sendAlertNow(meal, alert)"
-                      >
-                        <PhLightning :size="14" weight="regular" />
-                        {{
-                          sendingAlertKey === alertActionKey(meal, alert)
-                            ? 'Enviando…'
-                            : 'Enviar ahora'
-                        }}</button
-                      ><button
-                        v-if="alert.type === 'global' && alert.overridden"
-                        type="button"
-                        class="text-button"
-                        @click="restoreGlobalAlertDefault(alert)"
-                      >
-                        Usar por defecto</button
-                      ><button
-                        v-if="alert.type === 'custom'"
-                        type="button"
-                        class="remove-button"
-                        title="Quitar aviso"
-                        @click="removeCustomAlert(meal, draftDay.meals[meal].alerts.indexOf(alert))"
-                      >
-                        <PhX :size="15" weight="regular" />
-                      </button>
+                        <span>{{ alert.enabled ? 'Activo' : 'Inactivo' }}</span>
+                      </label>
                     </div>
-                    <p v-if="alert.message" class="alert-message">{{ alert.message }}</p>
-                    <template v-if="alert.type === 'custom'"
-                      ><div class="reminder-fields">
-                        <label class="field-label"
-                          >Nombre<input
-                            v-model="alert.name"
-                            type="text"
-                            maxlength="120"
-                            placeholder="Ej.: Comprar tupper" /></label
-                        ><label class="field-label"
-                          >Hora<input v-model="alert.time" type="time" /></label
-                        ><label class="field-label"
-                          >Día del aviso<select v-model.number="alert.day_offset">
-                            <option v-for="days in 31" :key="days - 1" :value="days - 1">
-                              {{ alertDayOffsetLabel(days - 1) }}
-                            </option>
-                          </select></label
-                        >
-                      </div>
-                      <div class="field-label icon-picker-field custom-icon-picker-field">
-                        Icono <span class="field-hint">Elige un icono</span>
-                        <div
-                          class="icon-picker"
-                          role="group"
-                          aria-label="Icono del aviso personalizado"
-                        >
-                          <button
-                            v-for="icon in alertIconOptions"
-                            :key="icon.id"
-                            type="button"
-                            class="icon-choice"
-                            :class="{ selected: alert.icon === icon.id }"
-                            :aria-label="icon.label"
-                            :aria-pressed="alert.icon === icon.id"
-                            :title="icon.label"
-                            @click="alert.icon = icon.id"
-                          >
-                            <component
-                              :is="icon.icon"
-                              :size="19"
-                              weight="regular"
-                              aria-hidden="true"
-                            />
-                          </button>
-                        </div>
-                      </div>
-                      <label class="field-label"
-                        >Mensaje<input
-                          v-model="alert.message"
-                          type="text"
-                          maxlength="240"
-                          placeholder="Texto del aviso"
-                        /><span class="field-hint"
-                          >Variables: %fecha · %platos · %comida · %aviso</span
-                        ></label
-                      ></template
+                    <div
+                      v-show="expandedDayAlert === dayAlertId(meal, alert)"
+                      :id="`${dayAlertId(meal, alert)}-panel`"
+                      class="day-alert-panel"
+                      role="region"
+                      :aria-labelledby="`${dayAlertId(meal, alert)}-toggle`"
                     >
+                      <p
+                        v-if="dayAlertValidation?.id === dayAlertId(meal, alert)"
+                        :id="`${dayAlertId(meal, alert)}-error`"
+                        class="day-alert-error"
+                        role="alert"
+                      >
+                        {{ dayAlertValidation.message }}
+                      </p>
+                      <p v-if="alert.type === 'global'" class="day-alert-help">
+                        {{
+                          alert.overridden
+                            ? 'Activación personalizada para esta comida.'
+                            : 'Activación de la configuración global.'
+                        }}
+                        El nombre, la hora y el mensaje se editan en Ajustes.
+                      </p>
+                      <p v-if="alert.type === 'global' && alert.message" class="alert-message">
+                        {{ alert.message }}
+                      </p>
+                      <template v-if="alert.type === 'custom'"
+                        ><div class="reminder-fields">
+                          <label class="field-label day-alert-name-field"
+                            >Nombre (obligatorio)<input
+                              :id="`${dayAlertId(meal, alert)}-name`"
+                              v-model="alert.name"
+                              type="text"
+                              required
+                              :aria-invalid="
+                                dayAlertValidation?.id === dayAlertId(meal, alert) &&
+                                dayAlertValidation.field === 'name'
+                              "
+                              :aria-describedby="
+                                dayAlertValidation?.id === dayAlertId(meal, alert) &&
+                                dayAlertValidation.field === 'name'
+                                  ? `${dayAlertId(meal, alert)}-error`
+                                  : undefined
+                              "
+                              maxlength="120"
+                              @input="dayAlertValidation = null"
+                              placeholder="Ej.: Comprar tupper" /></label
+                          ><label class="field-label"
+                            >Hora (obligatoria)<input
+                              :id="`${dayAlertId(meal, alert)}-time`"
+                              v-model="alert.time"
+                              type="time"
+                              required
+                              :aria-invalid="
+                                dayAlertValidation?.id === dayAlertId(meal, alert) &&
+                                dayAlertValidation.field === 'time'
+                              "
+                              :aria-describedby="
+                                dayAlertValidation?.id === dayAlertId(meal, alert) &&
+                                dayAlertValidation.field === 'time'
+                                  ? `${dayAlertId(meal, alert)}-error`
+                                  : undefined
+                              "
+                              @input="dayAlertValidation = null" /></label
+                          ><label class="field-label"
+                            >Día del aviso<select v-model.number="alert.day_offset">
+                              <option v-for="days in 31" :key="days - 1" :value="days - 1">
+                                {{ alertDayOffsetLabel(days - 1) }}
+                              </option>
+                            </select></label
+                          >
+                        </div>
+                        <div class="field-label icon-picker-field custom-icon-picker-field">
+                          Icono <span class="field-hint">Elige un icono</span>
+                          <div
+                            class="icon-picker"
+                            role="group"
+                            :aria-label="`Icono de ${dayAlertName(alert)}`"
+                          >
+                            <button
+                              v-for="icon in alertIconOptions"
+                              :key="icon.id"
+                              type="button"
+                              class="icon-choice"
+                              :class="{ selected: alert.icon === icon.id }"
+                              :aria-label="icon.label"
+                              :aria-pressed="alert.icon === icon.id"
+                              :title="icon.label"
+                              @click="alert.icon = icon.id"
+                            >
+                              <component
+                                :is="icon.icon"
+                                :size="19"
+                                weight="regular"
+                                aria-hidden="true"
+                              />
+                            </button>
+                          </div>
+                        </div>
+                        <label class="field-label"
+                          >Mensaje<input
+                            v-model="alert.message"
+                            type="text"
+                            maxlength="240"
+                            placeholder="Texto del aviso"
+                            :aria-describedby="`${dayAlertId(meal, alert)}-message-help`"
+                          /><span class="field-hint" :id="`${dayAlertId(meal, alert)}-message-help`"
+                            >Variables: %fecha · %platos · %comida · %aviso</span
+                          ></label
+                        ></template
+                      >
+                      <div class="day-alert-actions">
+                        <button
+                          type="button"
+                          class="send-alert-button"
+                          :aria-label="`Enviar ahora el aviso ${dayAlertName(alert)} para ${mealLabels[meal].toLowerCase()}`"
+                          :disabled="
+                            Boolean(sendingAlertKey) ||
+                            saving ||
+                            (alert.type === 'custom' &&
+                              (!String(alert.name || '').trim() || !alert.time))
+                          "
+                          @click="sendAlertNow(meal, alert)"
+                        >
+                          <PhLightning :size="16" aria-hidden="true" />
+                          {{
+                            sendingAlertKey === alertActionKey(meal, alert)
+                              ? 'Enviando…'
+                              : 'Enviar ahora'
+                          }}
+                        </button>
+                        <button
+                          v-if="alert.type === 'global' && alert.overridden"
+                          type="button"
+                          class="text-button"
+                          :disabled="saving || Boolean(sendingAlertKey)"
+                          @click="restoreGlobalAlertDefault(alert)"
+                        >
+                          Usar por defecto
+                        </button>
+                        <button
+                          v-if="alert.type === 'custom'"
+                          type="button"
+                          class="day-alert-remove"
+                          :aria-label="`Eliminar aviso ${dayAlertName(alert)} de ${mealLabels[meal].toLowerCase()}`"
+                          :disabled="saving || Boolean(sendingAlertKey)"
+                          @click="removeCustomAlert(meal, draftDay.meals[meal].alerts.indexOf(alert))"
+                        >
+                          <PhTrash :size="16" aria-hidden="true" /> Eliminar aviso
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <label class="field-label meal-note-field"
